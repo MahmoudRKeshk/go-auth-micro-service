@@ -4,12 +4,12 @@ import (
 	"database/sql"
 	"time"
 
-	uuid "github.com/jackc/pgx/pgtype/ext/gofrs-uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Token struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
 	TokenHash string
 	ExpiresAt time.Time
 	CreatedAt time.Time

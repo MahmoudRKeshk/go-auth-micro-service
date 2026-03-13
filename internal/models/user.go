@@ -4,11 +4,11 @@ import (
 	"database/sql"
 	"time"
 
-	uuid "github.com/jackc/pgx/pgtype/ext/gofrs-uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type User struct {
-	ID           uuid.UUID
+	ID           pgtype.UUID
 	FirstName    string
 	LastName     string
 	Email        string

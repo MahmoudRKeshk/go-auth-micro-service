@@ -3,12 +3,12 @@ package models
 import (
 	"time"
 
-	uuid "github.com/jackc/pgx/pgtype/ext/gofrs-uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type RolePermissions struct {
-	ID           uuid.UUID
-	RoleID       uuid.UUID
-	PermissionID uuid.UUID
+	ID           pgtype.UUID
+	RoleID       pgtype.UUID
+	PermissionID pgtype.UUID
 	CreatedAt    time.Time
 }

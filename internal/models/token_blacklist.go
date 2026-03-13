@@ -3,15 +3,15 @@ package models
 import (
 	"time"
 
-	uuid "github.com/jackc/pgx/pgtype/ext/gofrs-uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type TokenBlacklist struct {
-	ID        uuid.UUID    
-	TokenHash string       
-	UserID    uuid.UUID    
-	Reason    string       
+	ID        pgtype.UUID
+	TokenHash string
+	UserID    pgtype.UUID
+	Reason    string
 	BlockedAt time.Time
 	ExpiresAt time.Time
-	CreatedAt time.Time 
+	CreatedAt time.Time
 }
