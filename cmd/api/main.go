@@ -4,6 +4,12 @@ import (
 	"context"
 	"go-auth-micro-service/internal/config"
 	"go-auth-micro-service/internal/db"
+	"go-auth-micro-service/internal/handlers"
+	authhandler "go-auth-micro-service/internal/handlers/auth"
+	postgresrepo "go-auth-micro-service/internal/repositories/postgres"
+	"go-auth-micro-service/internal/services"
+	"log"
+	"net/http"
 )
 
 func main() {
@@ -12,6 +18,20 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	db.NewPostgres(context.Background(), cfg)
-	
+
+	postgresDB := db.NewPostgres(context.Background(), cfg)
+	defer postgresDB.Pool.Close()
+
+	userRepo := postgresrepo.NewUserRepository(postgresDB)
+	userService := services.NewUserService(userRepo)
+	authHandler := authhandler.NewAuthHandler(userService)
+
+	mux := http.NewServeMux()
+	handlers.RegisterRoutes(mux, authHandler)
+
+	serverAddr := cfg.GetServerPort()
+	log.Printf("server listening on %s", serverAddr)
+	if err := http.ListenAndServe(serverAddr, mux); err != nil {
+		log.Fatal(err)
+	}
 }

@@ -40,6 +40,9 @@ func (c *Config) GetBURL() string {
 }
 
 func (c *Config) GetServerPort() string {
+	if c.ServerPort == "" {
+		return ":8080" // default port
+	}
 	return ":" + c.ServerPort
 }
 
