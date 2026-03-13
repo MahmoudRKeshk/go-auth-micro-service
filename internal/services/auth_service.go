@@ -13,18 +13,23 @@ import (
 	"strings"
 	"time"
 
-	gofrsuuid "github.com/gofrs/uuid"
-	pgUUID "github.com/jackc/pgx/pgtype/ext/gofrs-uuid"
+	"github.com/gofrs/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"go-auth-micro-service/internal/config"
+	"fmt"
 )
+
+
 
 type UserService struct {
 	repo repositories.UserRepository
+	cfg config.Config
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
-func NewUserService(ur repositories.UserRepository) *UserService {
-	return &UserService{repo: ur}
+func NewUserService(ur repositories.UserRepository, cfg config.Config) *UserService {
+	return &UserService{repo: ur, cfg: cfg}
 }
 
 func (u *UserService) CreateUser(ctx context.Context, req *auth.RegisterRequest) *common.ErrorResponse {
@@ -62,7 +67,9 @@ func (u *UserService) CreateUser(ctx context.Context, req *auth.RegisterRequest)
 		return &common.ErrorResponse{
 			Code:    "SERVER_ERROR",
 			Message: "failed to create user",
-			Details: nil,
+			Details: map[string]string{
+				"username": "username is already taken",
+			},
 		}
 	}
 	if usernameExists {
@@ -80,11 +87,13 @@ func (u *UserService) CreateUser(ctx context.Context, req *auth.RegisterRequest)
 		return &common.ErrorResponse{
 			Code:    "SERVER_ERROR",
 			Message: "failed to create user",
-			Details: nil,
+			Details: map[string]string{
+				"password": "failed to hash password",
+			},
 		}
 	}
 
-	rawID, err := gofrsuuid.NewV4()
+	rawID, err := uuid.NewV4()
 	if err != nil {
 		return &common.ErrorResponse{
 			Code:    "SERVER_ERROR",
@@ -93,17 +102,8 @@ func (u *UserService) CreateUser(ctx context.Context, req *auth.RegisterRequest)
 		}
 	}
 
-	userID := pgUUID.UUID{}
-	if err := userID.Set(rawID); err != nil {
-		return &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to create user",
-			Details: nil,
-		}
-	}
-
 	user := &models.User{
-		ID:           userID,
+		ID:           pgtype.UUID{Bytes: rawID, Valid: true},
 		FirstName:    firstName,
 		LastName:     lastName,
 		Email:        email,
@@ -117,10 +117,13 @@ func (u *UserService) CreateUser(ctx context.Context, req *auth.RegisterRequest)
 
 	createdUser, err := u.repo.CreateUser(ctx, user)
 	if err != nil {
+		fmt.Printf("failed to create user: %v\n", err)
 		return &common.ErrorResponse{
 			Code:    "SERVER_ERROR",
 			Message: "failed to create user",
-			Details: nil,
+			Details: map[string]string{
+				"user": "failed to create user",
+			},
 		}
 	}
 
