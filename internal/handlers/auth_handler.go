@@ -36,3 +36,25 @@ func (h *AuthHandler) Register(rw http.ResponseWriter, r *http.Request) {
 
 	writeJSON(rw, http.StatusCreated, nil)
 }
+
+func (h *AuthHandler) Login(rw http.ResponseWriter, r *http.Request) {
+	var req dtos.LoginRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeError(rw, http.StatusBadRequest, &common.ErrorResponse{
+			Code:    "INVALID_REQUEST",
+			Message: "invalid request body",
+			Details: map[string]string{
+				"request": err.Error(),
+			},
+		})
+		return
+	}
+
+	resp, errResp := h.srv.Login(r.Context(), &req)
+	if errResp != nil {
+		writeError(rw, statusCodeFromError(errResp), errResp)
+		return
+	}
+
+	writeJSON(rw, http.StatusOK, resp)
+}

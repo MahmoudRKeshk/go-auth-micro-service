@@ -16,6 +16,7 @@ type Config struct {
 	DB_URL      string
 	DB_SSLMode  string
 	ServerPort  string
+	JwtSecret   string
 }
 
 func (c *Config) Load() error {
@@ -28,6 +29,7 @@ func (c *Config) Load() error {
 	c.DB_URL = os.Getenv("DB_URL")
 	c.DB_SSLMode = os.Getenv("DB_SSLMODE")
 	c.ServerPort = os.Getenv("SERVER_PORT")
+	c.JwtSecret = os.Getenv("JWT_SECRET")
 
 	if err := c.validateConfig(); err != nil {
 		return err
@@ -44,6 +46,10 @@ func (c *Config) GetServerPort() string {
 		return ":8080" // default port
 	}
 	return ":" + c.ServerPort
+}
+
+func (c *Config) GetJwtSecret() string {
+	return c.JwtSecret
 }
 
 func (c *Config) validateConfig() error {
@@ -64,6 +70,9 @@ func (c *Config) validateConfig() error {
 	}
 	if c.DB_SSLMode == "" {
 		return errors.New("DB_SSLMODE is not configured in the environment variables")
+	}
+	if c.JwtSecret == "" {
+		return errors.New("JWT_SECRET is not configured in the environment variables")
 	}
 	return nil
 }

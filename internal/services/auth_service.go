@@ -6,6 +6,7 @@ import (
 	"go-auth-micro-service/internal/dtos/common"
 	"go-auth-micro-service/internal/models"
 	"go-auth-micro-service/internal/repositories"
+	"go-auth-micro-service/pkg/security"
 	"go-auth-micro-service/pkg/utils"
 	"net/mail"
 	"regexp"
@@ -13,21 +14,22 @@ import (
 	"time"
 
 	"fmt"
+	"go-auth-micro-service/internal/dtos"
+
 	"github.com/gofrs/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"go-auth-micro-service/internal/config"
-	"go-auth-micro-service/internal/dtos"
 )
 
 type UserService struct {
-	repo repositories.UserRepository
-	cfg  config.Config
+	userRepo         repositories.UserRepository
+	refreshTokenRepo repositories.RefreshTokenRepository
+	jwt              security.JwtService
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
-func NewUserService(ur repositories.UserRepository, cfg config.Config) *UserService {
-	return &UserService{repo: ur, cfg: cfg}
+func NewUserService(ur repositories.UserRepository, refreshTokenRepo repositories.RefreshTokenRepository, jwt security.JwtService) *UserService {
+	return &UserService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, jwt: jwt}
 }
 
 func (u *UserService) CreateUser(ctx context.Context, req *dtos.RegisterRequest) *common.ErrorResponse {
@@ -41,7 +43,7 @@ func (u *UserService) CreateUser(ctx context.Context, req *dtos.RegisterRequest)
 	lastName := strings.TrimSpace(req.LastName)
 
 	// Check if email already exists
-	emailExists, err := u.repo.EmailExists(ctx, email)
+	emailExists, err := u.userRepo.EmailExists(ctx, email)
 	if err != nil {
 		return &common.ErrorResponse{
 			Code:    "SERVER_ERROR",
@@ -60,7 +62,7 @@ func (u *UserService) CreateUser(ctx context.Context, req *dtos.RegisterRequest)
 	}
 
 	// Check if username already exists
-	usernameExists, err := u.repo.UsernameExists(ctx, username)
+	usernameExists, err := u.userRepo.UsernameExists(ctx, username)
 	if err != nil {
 		return &common.ErrorResponse{
 			Code:    "SERVER_ERROR",
@@ -113,7 +115,7 @@ func (u *UserService) CreateUser(ctx context.Context, req *dtos.RegisterRequest)
 		LastLoginAt:  sql.NullTime{},
 	}
 
-	createdUser, err := u.repo.CreateUser(ctx, user)
+	createdUser, err := u.userRepo.CreateUser(ctx, user)
 	if err != nil {
 		fmt.Printf("failed to create user: %v\n", err)
 		return &common.ErrorResponse{
@@ -128,6 +130,96 @@ func (u *UserService) CreateUser(ctx context.Context, req *dtos.RegisterRequest)
 	_ = createdUser
 
 	return nil
+}
+
+func (u *UserService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.LoginResponse, *common.ErrorResponse) {
+	if err := u.validateLoginRequest(req); err != nil {
+		return nil, err
+	}
+
+	email := strings.TrimSpace(req.Email)
+	password := strings.TrimSpace(req.Password)
+
+	user, err := u.userRepo.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "NOT_FOUND",
+			Message: "user not found",
+			Details: map[string]string{
+				"email": "email not found",
+			},
+		}
+	}
+
+	isPasswordValid := utils.CheckPasswordHash(password, user.PasswordHash)
+	if !isPasswordValid {
+		return nil, &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "invalid credentials",
+			Details: map[string]string{
+				"request": "invalid credentials",
+			},
+		}
+	}
+
+	refreshToken, err := u.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Hour*24*7))
+	accessToken, err := u.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Minute*15))
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to login",
+			Details: map[string]string{
+				"request": "failed to generate tokens",
+			},
+		}
+	}
+
+	rawID, err := uuid.NewV4()
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to create user",
+			Details: nil,
+		}
+	}
+
+	refreshTokenHash, err := utils.HashPassword(refreshToken)
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to create user",
+			Details: map[string]string{
+				"password": "failed to hash password",
+			},
+		}
+	}
+
+	refreshTokenEntity := models.RefreshToken{
+		ID:         pgtype.UUID{Bytes: rawID, Valid: true},
+		UserID:     user.ID,
+		TokenHash:  refreshTokenHash,
+		ExpiresAt:  time.Now().Add(time.Hour * 24 * 7),
+		IsRevoked:  false,
+		RevokedAt:  sql.NullTime{},
+		LastUsedAt: sql.NullTime{},
+		CreatedAt:  time.Now(),
+	}
+
+	err = u.refreshTokenRepo.InsertRefreshToken(ctx, &refreshTokenEntity)
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to create user",
+			Details: map[string]string{
+				"user": "failed to create user",
+			},
+		}
+	}
+
+	return &dtos.LoginResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+	}, nil
 }
 
 // private utils methods
@@ -187,6 +279,42 @@ func (u *UserService) validateRegisterRequest(req *dtos.RegisterRequest) *common
 		return &common.ErrorResponse{
 			Code:    "VALIDATION_ERROR",
 			Message: "invalid register request",
+			Details: errors,
+		}
+	}
+
+	return nil
+}
+
+func (u *UserService) validateLoginRequest(req *dtos.LoginRequest) *common.ErrorResponse {
+	if req == nil {
+		return &common.ErrorResponse{
+			Code:    "VALIDATION_ERROR",
+			Message: "invalid login request",
+			Details: map[string]string{
+				"request": "request body is required",
+			},
+		}
+	}
+	errors := make(map[string]string)
+
+	email := strings.TrimSpace(req.Email)
+	password := strings.TrimSpace(req.Password)
+
+	if email == "" {
+		errors["email"] = "email is required"
+	} else if !isValidEmail(email) {
+		errors["email"] = "email must be a valid email address"
+	}
+
+	if password == "" {
+		errors["password"] = "password is required"
+	}
+
+	if len(errors) > 0 {
+		return &common.ErrorResponse{
+			Code:    "VALIDATION_ERROR",
+			Message: "invalid login request",
 			Details: errors,
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"go-auth-micro-service/internal/repositories/postgres"
 	"go-auth-micro-service/internal/routes"
 	"go-auth-micro-service/internal/services"
+	"go-auth-micro-service/pkg/security"
 	"log"
 	"net/http"
 )
@@ -23,11 +24,13 @@ func main() {
 	defer postgresDB.Pool.Close()
 
 	userRepo := postgres.NewUserRepository(postgresDB)
-	userService := services.NewUserService(userRepo, cfg)
+	refreshTokenRepo := postgres.NewRefreshTokenRepository(postgresDB)
+	JwtService := security.NewJwtService(cfg.GetJwtSecret())
+	userService := services.NewUserService(userRepo, refreshTokenRepo, *JwtService)
 	authHandler := handlers.NewAuthHandler(userService)
 
 	mux := http.NewServeMux()
-	
+
 	routes.RegisterRoutes(mux, authHandler)
 
 	serverAddr := cfg.GetServerPort()
