@@ -5,8 +5,8 @@ import (
 	"go-auth-micro-service/internal/config"
 	"go-auth-micro-service/internal/db"
 	"go-auth-micro-service/internal/handlers"
-	authhandler "go-auth-micro-service/internal/handlers/auth"
-	postgresrepo "go-auth-micro-service/internal/repositories/postgres"
+	"go-auth-micro-service/internal/repositories/postgres"
+	"go-auth-micro-service/internal/routes"
 	"go-auth-micro-service/internal/services"
 	"log"
 	"net/http"
@@ -22,12 +22,13 @@ func main() {
 	postgresDB := db.NewPostgres(context.Background(), cfg)
 	defer postgresDB.Pool.Close()
 
-	userRepo := postgresrepo.NewUserRepository(postgresDB)
-	userService := services.NewUserService(userRepo)
-	authHandler := authhandler.NewAuthHandler(userService)
+	userRepo := postgres.NewUserRepository(postgresDB)
+	userService := services.NewUserService(userRepo, cfg)
+	authHandler := handlers.NewAuthHandler(userService)
 
 	mux := http.NewServeMux()
-	handlers.RegisterRoutes(mux, authHandler)
+	
+	routes.RegisterRoutes(mux, authHandler)
 
 	serverAddr := cfg.GetServerPort()
 	log.Printf("server listening on %s", serverAddr)

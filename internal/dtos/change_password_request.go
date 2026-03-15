@@ -1,4 +1,4 @@
-package auth
+package dtos
 
 type ChangePasswordRequest struct {
 	OldPassword string `json:"old_password"`

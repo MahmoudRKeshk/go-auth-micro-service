@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"database/sql"
-	"go-auth-micro-service/internal/dtos/auth"
 	"go-auth-micro-service/internal/dtos/common"
 	"go-auth-micro-service/internal/models"
 	"go-auth-micro-service/internal/repositories"
@@ -13,17 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"fmt"
 	"github.com/gofrs/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go-auth-micro-service/internal/config"
-	"fmt"
+	"go-auth-micro-service/internal/dtos"
 )
-
-
 
 type UserService struct {
 	repo repositories.UserRepository
-	cfg config.Config
+	cfg  config.Config
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
@@ -32,7 +30,7 @@ func NewUserService(ur repositories.UserRepository, cfg config.Config) *UserServ
 	return &UserService{repo: ur, cfg: cfg}
 }
 
-func (u *UserService) CreateUser(ctx context.Context, req *auth.RegisterRequest) *common.ErrorResponse {
+func (u *UserService) CreateUser(ctx context.Context, req *dtos.RegisterRequest) *common.ErrorResponse {
 	if err := u.validateRegisterRequest(req); err != nil {
 		return err
 	}
@@ -133,7 +131,7 @@ func (u *UserService) CreateUser(ctx context.Context, req *auth.RegisterRequest)
 }
 
 // private utils methods
-func (u *UserService) validateRegisterRequest(req *auth.RegisterRequest) *common.ErrorResponse {
+func (u *UserService) validateRegisterRequest(req *dtos.RegisterRequest) *common.ErrorResponse {
 	if req == nil {
 		return &common.ErrorResponse{
 			Code:    "VALIDATION_ERROR",

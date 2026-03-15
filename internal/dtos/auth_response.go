@@ -1,4 +1,4 @@
-package auth
+package dtos
 
 type AuthResponse struct {
 	AccessToken  string `json:"access_token"`
