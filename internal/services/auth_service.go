@@ -235,6 +235,130 @@ func (u *UserService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.
 	}, nil
 }
 
+func (u *UserService) Refresh(ctx context.Context, req *dtos.RefreshRequest) (*dtos.RefreshResponse, *common.ErrorResponse) {
+	if err := u.validateRefreshRequest(req); err != nil {
+		return nil, err
+	}
+
+	oldToken := strings.TrimSpace(req.RefreshToken)
+
+	parsedRefreshToken, err := u.jwt.ParseToken(oldToken)
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "NOT_FOUND",
+			Message: "invalid refresh token",
+			Details: map[string]string{
+				"refresh_token": "invalid refresh token",
+			},
+		}
+	}
+	userID, ok := parsedRefreshToken["userId"].(string)
+	if !ok || userID == "" {
+		return nil, &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "invalid refresh token",
+			Details: map[string]string{
+				"refresh_token": "invalid refresh token claims",
+			},
+		}
+	}
+
+	expTime, err := parsedRefreshToken.GetExpirationTime()
+	if err != nil || expTime == nil {
+		return nil, &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "invalid refresh token",
+			Details: map[string]string{
+				"refresh_token": "missing expiration claim",
+			},
+		}
+	}
+
+	if time.Now().After(expTime.Time) {
+		return nil, &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "refresh token expired",
+			Details: map[string]string{
+				"refresh_token": "refresh token expired",
+			},
+		}
+	}
+
+	refreshTokenHash := utils.HashToken(oldToken)
+	IsRefreshTokenRevoked, err := u.refreshTokenRepo.IsRefreshTokenRevoked(ctx, refreshTokenHash)
+
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to refresh token",
+			Details: nil,
+		}
+	}
+
+	if IsRefreshTokenRevoked {
+		return nil, &common.ErrorResponse{
+			Code:    "NOT_FOUND",
+			Message: "refresh token revoked",
+			Details: map[string]string{
+				"refresh_token": "invalid refresh token, it has been revoked",
+			},
+		}
+	}
+
+	user, err := u.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "NOT_FOUND",
+			Message: "user not found",
+			Details: map[string]string{
+				"user": "user not found",
+			},
+		}
+	}
+
+	accessToken, err := u.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Minute*15))
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to refresh token",
+			Details: nil,
+		}
+	}
+	accessTokenHash := utils.HashToken(accessToken)
+	rawID, err := uuid.NewV4()
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to refresh token",
+			Details: nil,
+		}
+	}
+	accessTokenEntity := models.Token{
+		ID:        pgtype.UUID{Bytes: rawID, Valid: true},
+		UserID:    user.ID,
+		TokenHash: accessTokenHash,
+		ExpiresAt: time.Now().Add(time.Minute * 15),
+		CreatedAt: time.Now(),
+		IsRevoked: false,
+		RevokedAt: sql.NullTime{},
+	}
+
+	err = u.tokenRepo.InsertToken(ctx, &accessTokenEntity)
+	if err != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to refresh token",
+			Details: map[string]string{
+				"refresh_token": "failed to generate tokens",
+			},
+		}
+	}
+
+	return &dtos.RefreshResponse{
+		AccessToken: accessToken,
+	}, nil
+}
+
 // private utils methods
 func (u *UserService) validateRegisterRequest(req *dtos.RegisterRequest) *common.ErrorResponse {
 	if req == nil {
@@ -328,6 +452,35 @@ func (u *UserService) validateLoginRequest(req *dtos.LoginRequest) *common.Error
 		return &common.ErrorResponse{
 			Code:    "VALIDATION_ERROR",
 			Message: "invalid login request",
+			Details: errors,
+		}
+	}
+
+	return nil
+}
+
+func (u *UserService) validateRefreshRequest(req *dtos.RefreshRequest) *common.ErrorResponse {
+	if req == nil {
+		return &common.ErrorResponse{
+			Code:    "VALIDATION_ERROR",
+			Message: "invalid refresh request",
+			Details: map[string]string{
+				"request": "request body is required",
+			},
+		}
+	}
+	errors := make(map[string]string)
+
+	refreshToken := strings.TrimSpace(req.RefreshToken)
+
+	if refreshToken == "" {
+		errors["refresh_token"] = "refresh token is required"
+	}
+
+	if len(errors) > 0 {
+		return &common.ErrorResponse{
+			Code:    "VALIDATION_ERROR",
+			Message: "invalid refresh request",
 			Details: errors,
 		}
 	}

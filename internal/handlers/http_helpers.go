@@ -42,6 +42,10 @@ func statusCodeFromError(errResp *common.ErrorResponse) int {
 		return http.StatusBadRequest
 	case "NOT_FOUND":
 		return http.StatusNotFound
+	case "BAD_REQUEST":
+		return http.StatusBadRequest
+	case "SERVER_ERROR":
+		return http.StatusInternalServerError
 	default:
 		return http.StatusInternalServerError
 	}

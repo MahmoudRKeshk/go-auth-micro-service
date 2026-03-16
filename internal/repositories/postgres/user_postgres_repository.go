@@ -14,6 +14,35 @@ func NewUserRepository(db *db.Postgres) *UserPostgresRepository {
 	return &UserPostgresRepository{db: db}
 }
 
+func (u *UserPostgresRepository) GetUserByID(ctx context.Context, id string) (models.User, error) {
+	query := `
+		SELECT
+			id, first_name, last_name, email, username, password_hash,
+			is_active, created_at, updated_at, last_login_at
+		FROM users
+		WHERE id = $1
+	`
+
+	var user models.User
+	err := u.db.Pool.QueryRow(ctx, query, id).Scan(
+		&user.ID,
+		&user.FirstName,
+		&user.LastName,
+		&user.Email,
+		&user.Username,
+		&user.PasswordHash,
+		&user.IsActive,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+		&user.LastLoginAt,
+	)
+	if err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
 func (u *UserPostgresRepository) CreateUser(ctx context.Context, user *models.User) (models.User, error) {
 	query := `
 		INSERT INTO users (

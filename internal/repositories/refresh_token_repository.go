@@ -7,4 +7,5 @@ import (
 
 type RefreshTokenRepository interface {
 	InsertRefreshToken(ctx context.Context, refreshToken *models.RefreshToken) error
+	IsRefreshTokenRevoked(ctx context.Context, refreshTokenHash string) (bool, error)
 }
