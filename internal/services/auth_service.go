@@ -183,16 +183,7 @@ func (u *UserService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.
 		}
 	}
 
-	refreshTokenHash, err := utils.HashPassword(refreshToken)
-	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to create user",
-			Details: map[string]string{
-				"password": "failed to hash password",
-			},
-		}
-	}
+	refreshTokenHash:= utils.HashToken(refreshToken)
 
 	refreshTokenEntity := models.RefreshToken{
 		ID:         pgtype.UUID{Bytes: rawID, Valid: true},

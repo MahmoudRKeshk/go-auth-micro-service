@@ -31,7 +31,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	routes.RegisterRoutes(mux, authHandler)
+	routes.RegisterRoutes(mux, authHandler, JwtService)
 
 	serverAddr := cfg.GetServerPort()
 	log.Printf("server listening on %s", serverAddr)
