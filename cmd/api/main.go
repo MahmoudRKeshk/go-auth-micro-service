@@ -25,8 +25,9 @@ func main() {
 
 	userRepo := postgres.NewUserRepository(postgresDB)
 	refreshTokenRepo := postgres.NewRefreshTokenRepository(postgresDB)
+	tokenRepo := postgres.NewTokenRepository(postgresDB)
 	JwtService := security.NewJwtService(cfg.GetJwtSecret())
-	userService := services.NewUserService(userRepo, refreshTokenRepo, *JwtService)
+	userService := services.NewUserService(userRepo, refreshTokenRepo, tokenRepo, *JwtService)
 	authHandler := handlers.NewAuthHandler(userService)
 
 	mux := http.NewServeMux()

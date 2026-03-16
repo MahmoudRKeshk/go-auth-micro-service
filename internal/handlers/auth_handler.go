@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"fmt"
 	"go-auth-micro-service/internal/dtos"
 	"go-auth-micro-service/internal/dtos/common"
-	"go-auth-micro-service/internal/middlewares"
 	"go-auth-micro-service/internal/services"
 	"net/http"
 )
@@ -59,10 +57,4 @@ func (h *AuthHandler) Login(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(rw, http.StatusOK, resp)
-}
-
-func (h *AuthHandler) Test(rw http.ResponseWriter, r *http.Request) {
-	userID, _ := middlewares.UserIDFromContext(r.Context())
-	fmt.Println(userID)
-	writeJSON(rw, http.StatusOK, userID)
 }

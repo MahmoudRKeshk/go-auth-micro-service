@@ -18,18 +18,20 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"sync"
 )
 
 type UserService struct {
 	userRepo         repositories.UserRepository
 	refreshTokenRepo repositories.RefreshTokenRepository
+	tokenRepo        repositories.TokenRepository
 	jwt              security.JwtService
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
-func NewUserService(ur repositories.UserRepository, refreshTokenRepo repositories.RefreshTokenRepository, jwt security.JwtService) *UserService {
-	return &UserService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, jwt: jwt}
+func NewUserService(ur repositories.UserRepository, refreshTokenRepo repositories.RefreshTokenRepository, tokenRepo repositories.TokenRepository, jwt security.JwtService) *UserService {
+	return &UserService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, tokenRepo: tokenRepo, jwt: jwt}
 }
 
 func (u *UserService) CreateUser(ctx context.Context, req *dtos.RegisterRequest) *common.ErrorResponse {
@@ -183,7 +185,8 @@ func (u *UserService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.
 		}
 	}
 
-	refreshTokenHash:= utils.HashToken(refreshToken)
+	refreshTokenHash := utils.HashToken(refreshToken)
+	accessTokenHash := utils.HashToken(accessToken)
 
 	refreshTokenEntity := models.RefreshToken{
 		ID:         pgtype.UUID{Bytes: rawID, Valid: true},
@@ -196,17 +199,36 @@ func (u *UserService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.
 		CreatedAt:  time.Now(),
 	}
 
-	err = u.refreshTokenRepo.InsertRefreshToken(ctx, &refreshTokenEntity)
-	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to create user",
-			Details: map[string]string{
-				"user": "failed to create user",
-			},
-		}
+	tokenEntity := models.Token{
+		ID:        pgtype.UUID{Bytes: rawID, Valid: true},
+		UserID:    user.ID,
+		TokenHash: accessTokenHash,
+		ExpiresAt: time.Now().Add(time.Minute * 15),
+		CreatedAt: time.Now(),
+		IsRevoked: false,
+		RevokedAt: sql.NullTime{},
 	}
 
+	wg := sync.WaitGroup{}
+	var err01 error
+	var err02 error
+
+	wg.Go(func() {
+		err01 = u.refreshTokenRepo.InsertRefreshToken(ctx, &refreshTokenEntity)
+	})
+	wg.Go(func() {
+		err02 = u.tokenRepo.InsertToken(ctx, &tokenEntity)
+	})
+
+	wg.Wait()
+
+	if err01 != nil || err02 != nil {
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to create login",
+			Details: nil,
+		}
+	}
 	return &dtos.LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
