@@ -61,3 +61,33 @@ func (r *RefreshTokenPostgresRepository) IsRefreshTokenRevoked(ctx context.Conte
 
 	return isRevoked, nil
 }
+
+func (r *RefreshTokenPostgresRepository) RevokeNonExpiredRefreshTokens(ctx context.Context, userId string) error {
+	query := `
+		UPDATE refresh_tokens
+		SET is_revoked = true, revoked_at = now()
+		WHERE user_id = $1 AND expires_at > now() AND is_revoked = false
+	`
+	_, err := r.db.Pool.Exec(
+		ctx,
+		query,
+		userId,
+	)
+
+	return err
+}
+
+func (r *RefreshTokenPostgresRepository) RevokeRefreshToken(ctx context.Context, refreshTokenHash string) error {
+	query := `
+		UPDATE refresh_tokens
+		SET is_revoked = true, revoked_at = now()
+		WHERE token_hash = $1 AND is_revoked = false
+	`
+	_, err := r.db.Pool.Exec(
+		ctx,
+		query,
+		refreshTokenHash,
+	)
+
+	return err
+}

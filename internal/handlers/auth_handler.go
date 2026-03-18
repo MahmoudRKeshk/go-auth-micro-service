@@ -81,13 +81,57 @@ func (h *AuthHandler) Refresh(rw http.ResponseWriter, r *http.Request) {
 	writeJSON(rw, http.StatusOK, resp)
 }
 
+func (h *AuthHandler) Logout(rw http.ResponseWriter, r *http.Request) {
+	var req dtos.LogoutRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeError(rw, http.StatusBadRequest, &common.ErrorResponse{
+			Code:    "INVALID_REQUEST",
+			Message: "invalid request body",
+			Details: map[string]string{
+				"request": err.Error(),
+			},
+		})
+		return
+	}
+
+	errResp := h.srv.Logout(r.Context(), &req)
+	if errResp != nil {
+		writeError(rw, statusCodeFromError(errResp), errResp)
+		return
+	}
+
+	writeJSON(rw, http.StatusOK, nil)
+}
+
+func (h *AuthHandler) LogoutAll(rw http.ResponseWriter, r *http.Request) {
+	var req dtos.LogoutRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeError(rw, http.StatusBadRequest, &common.ErrorResponse{
+			Code:    "INVALID_REQUEST",
+			Message: "invalid request body",
+			Details: map[string]string{
+				"request": err.Error(),
+			},
+		})
+		return
+	}
+
+	errResp := h.srv.LogoutAll(r.Context(), &req)
+	if errResp != nil {
+		writeError(rw, statusCodeFromError(errResp), errResp)
+		return
+	}
+
+	writeJSON(rw, http.StatusOK, nil)
+}
+
 /*
 
 POST /auth/register -> Implemented
 POST /auth/login -> Implemented
-POST /auth/refresh -> Not Implemented
-POST /auth/logout -> Not Implemented
-POST /auth/logout-all -> Not Implemented
+POST /auth/refresh -> Implemented
+POST /auth/logout -> Implemented
+POST /auth/logout-all -> Implemented
 GET /auth/me -> Not Implemented
 POST /auth/change-password -> Not Implemented
 GET /auth/sessions -> Not Implemented

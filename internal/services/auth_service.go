@@ -245,7 +245,7 @@ func (u *UserService) Refresh(ctx context.Context, req *dtos.RefreshRequest) (*d
 	parsedRefreshToken, err := u.jwt.ParseToken(oldToken)
 	if err != nil {
 		return nil, &common.ErrorResponse{
-			Code:    "NOT_FOUND",
+			Code:    "BAD_REQUEST",
 			Message: "invalid refresh token",
 			Details: map[string]string{
 				"refresh_token": "invalid refresh token",
@@ -357,6 +357,151 @@ func (u *UserService) Refresh(ctx context.Context, req *dtos.RefreshRequest) (*d
 	return &dtos.RefreshResponse{
 		AccessToken: accessToken,
 	}, nil
+}
+
+func (u *UserService) Logout(ctx context.Context, req *dtos.LogoutRequest) *common.ErrorResponse {
+	if err := u.validateLogoutRequest(req); err != nil {
+		return err
+	}
+
+	refreshToken := strings.TrimSpace(req.RefreshToken)
+
+	parsedRefreshToken, err := u.jwt.ParseToken(refreshToken)
+	if err != nil {
+		return &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "invalid refresh token",
+			Details: map[string]string{
+				"refresh_token": "invalid refresh token",
+			},
+		}
+	}
+	userID, ok := parsedRefreshToken["userId"].(string)
+	if !ok || userID == "" {
+		return &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "invalid refresh token",
+			Details: map[string]string{
+				"refresh_token": "invalid refresh token claims",
+			},
+		}
+	}
+
+	expTime, err := parsedRefreshToken.GetExpirationTime()
+	if err != nil || expTime == nil {
+		return &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "invalid refresh token",
+			Details: map[string]string{
+				"refresh_token": "missing expiration claim",
+			},
+		}
+	}
+
+	if time.Now().After(expTime.Time) {
+		return &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "refresh token expired",
+			Details: map[string]string{
+				"refresh_token": "refresh token expired",
+			},
+		}
+	}
+
+	refreshTokenHash := utils.HashToken(refreshToken)
+	IsRefreshTokenRevoked, err := u.refreshTokenRepo.IsRefreshTokenRevoked(ctx, refreshTokenHash)
+
+	if err != nil {
+		return &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to refresh token",
+			Details: nil,
+		}
+	}
+
+	if IsRefreshTokenRevoked {
+		return &common.ErrorResponse{
+			Code:    "NOT_FOUND",
+			Message: "refresh token revoked",
+			Details: map[string]string{
+				"refresh_token": "invalid refresh token, it has been revoked",
+			},
+		}
+	}
+
+	err = u.refreshTokenRepo.RevokeRefreshToken(ctx, refreshTokenHash)
+	if err != nil {
+		return &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to revoke refresh token",
+			Details: nil,
+		}
+	}
+
+	return nil
+}
+
+func (u *UserService) LogoutAll(ctx context.Context, req *dtos.LogoutRequest) *common.ErrorResponse {
+	if err := u.validateLogoutRequest(req); err != nil {
+		return err
+	}
+
+	refreshToken := strings.TrimSpace(req.RefreshToken)
+
+	parsedRefreshToken, err := u.jwt.ParseToken(refreshToken)
+	if err != nil {
+		return &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "invalid refresh token",
+			Details: map[string]string{
+				"refresh_token": "invalid refresh token",
+			},
+		}
+	}
+	userID, ok := parsedRefreshToken["userId"].(string)
+	if !ok || userID == "" {
+		return &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "invalid refresh token",
+			Details: map[string]string{
+				"refresh_token": "invalid refresh token claims",
+			},
+		}
+	}
+
+	expTime, err := parsedRefreshToken.GetExpirationTime()
+	if err != nil || expTime == nil {
+		return &common.ErrorResponse{
+			Code:    "BAD_REQUEST",
+			Message: "invalid refresh token",
+			Details: map[string]string{
+				"refresh_token": "missing expiration claim",
+			},
+		}
+	}
+
+	wg := sync.WaitGroup{}
+	var err01 error
+	var err02 error
+
+	wg.Go(func() {
+		err01 = u.refreshTokenRepo.RevokeNonExpiredRefreshTokens(ctx, userID)
+	})
+	wg.Go(func() {
+		err02 = u.tokenRepo.RevokeNonExpiredTokens(ctx, userID)
+	})
+
+	wg.Wait()
+
+	if err01 != nil || err02 != nil {
+		return &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to logout all",
+			Details: nil,
+		}
+	}
+	return nil
+
 }
 
 // private utils methods
@@ -481,6 +626,35 @@ func (u *UserService) validateRefreshRequest(req *dtos.RefreshRequest) *common.E
 		return &common.ErrorResponse{
 			Code:    "VALIDATION_ERROR",
 			Message: "invalid refresh request",
+			Details: errors,
+		}
+	}
+
+	return nil
+}
+
+func (u *UserService) validateLogoutRequest(req *dtos.LogoutRequest) *common.ErrorResponse {
+	if req == nil {
+		return &common.ErrorResponse{
+			Code:    "VALIDATION_ERROR",
+			Message: "invalid logout request",
+			Details: map[string]string{
+				"request": "request body is required",
+			},
+		}
+	}
+	errors := make(map[string]string)
+
+	refreshToken := strings.TrimSpace(req.RefreshToken)
+
+	if refreshToken == "" {
+		errors["refresh_token"] = "refresh token is required"
+	}
+
+	if len(errors) > 0 {
+		return &common.ErrorResponse{
+			Code:    "VALIDATION_ERROR",
+			Message: "invalid logout request",
 			Details: errors,
 		}
 	}

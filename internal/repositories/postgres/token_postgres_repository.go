@@ -39,3 +39,33 @@ func (t *TokenPostgresRepository) InsertToken(ctx context.Context, token *models
 
 	return nil
 }
+
+func (t *TokenPostgresRepository) RevokeNonExpiredTokens(ctx context.Context, userId string) error {
+	query := `
+		UPDATE tokens
+		SET is_revoked = true, revoked_at = now()
+		WHERE user_id = $1 AND expires_at > now() AND is_revoked = false
+	`
+	_, err := t.db.Pool.Exec(
+		ctx,
+		query,
+		userId,
+	)
+
+	return err
+}
+
+func (t *TokenPostgresRepository) RevokeToken(ctx context.Context, tokenHash string) error {
+	query := `
+		UPDATE tokens
+		SET is_revoked = true, revoked_at = now()
+		WHERE token_hash = $1 AND is_revoked = false
+	`
+	_, err := t.db.Pool.Exec(
+		ctx,
+		query,
+		tokenHash,
+	)
+
+	return err
+}
