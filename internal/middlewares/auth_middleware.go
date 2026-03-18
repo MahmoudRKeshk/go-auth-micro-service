@@ -11,14 +11,21 @@ import (
 
 type contextKey string
 
-const userIDContextKey contextKey = "userId"
+type AuthMiddleware struct {
+	jwtSrv    *security.JwtService
+	tokenRepo repositories.TokenRepository
+}
 
-func UserIDFromContext(ctx context.Context) (string, bool) {
-	userID, ok := ctx.Value(userIDContextKey).(string)
+func NewMiddlewares(jwtSrv *security.JwtService, tokenRepo repositories.TokenRepository) *AuthMiddleware {
+	return &AuthMiddleware{jwtSrv: jwtSrv, tokenRepo: tokenRepo}
+}
+
+func (m *AuthMiddleware) UserIDFromContext(ctx context.Context) (string, bool) {
+	userID, ok := ctx.Value("userId").(string)
 	return userID, ok
 }
 
-func AuthMiddleware(jwtSrv *security.JwtService, tokenRepo repositories.TokenRepository, next http.Handler) func(w http.ResponseWriter, r *http.Request) {
+func (m *AuthMiddleware) Auth(next http.Handler) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authorization := r.Header.Get("Authorization")
 		if authorization == "" {
@@ -33,7 +40,7 @@ func AuthMiddleware(jwtSrv *security.JwtService, tokenRepo repositories.TokenRep
 		token := strings.TrimPrefix(authorization, "Bearer ")
 		tokenHash := utils.HashToken(token)
 
-		isRevoked, err := tokenRepo.IsTokenRevoked(r.Context(), tokenHash)
+		isRevoked, err := m.tokenRepo.IsTokenRevoked(r.Context(), tokenHash)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -44,7 +51,7 @@ func AuthMiddleware(jwtSrv *security.JwtService, tokenRepo repositories.TokenRep
 			return
 		}
 
-		claims, err := jwtSrv.ParseToken(token)
+		claims, err := m.jwtSrv.ParseToken(token)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -56,7 +63,7 @@ func AuthMiddleware(jwtSrv *security.JwtService, tokenRepo repositories.TokenRep
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), userIDContextKey, userID)
+		ctx := context.WithValue(r.Context(), "userId", userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }

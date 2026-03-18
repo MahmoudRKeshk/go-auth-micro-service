@@ -11,6 +11,7 @@ import (
 	"go-auth-micro-service/pkg/security"
 	"log"
 	"net/http"
+	"go-auth-micro-service/internal/middlewares"
 )
 
 func main() {
@@ -28,11 +29,12 @@ func main() {
 	tokenRepo := postgres.NewTokenRepository(postgresDB)
 	JwtService := security.NewJwtService(cfg.GetJwtSecret())
 	userService := services.NewUserService(userRepo, refreshTokenRepo, tokenRepo, *JwtService)
-	authHandler := handlers.NewAuthHandler(userService)
+	middlewares := middlewares.NewMiddlewares(JwtService, tokenRepo)
 
+	authHandler := handlers.NewAuthHandler(userService, middlewares)
 	mux := http.NewServeMux()
 
-	routes.RegisterRoutes(mux, authHandler, JwtService)
+	routes.RegisterRoutes(mux, authHandler, middlewares)
 
 	serverAddr := cfg.GetServerPort()
 	log.Printf("server listening on %s", serverAddr)

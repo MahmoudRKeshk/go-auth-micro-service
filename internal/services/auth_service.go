@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"go-auth-micro-service/internal/dtos/common"
 	"go-auth-micro-service/internal/models"
 	"go-auth-micro-service/internal/repositories"
@@ -16,12 +17,14 @@ import (
 	"fmt"
 	"go-auth-micro-service/internal/dtos"
 
-	"github.com/gofrs/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"sync"
+
+	"github.com/gofrs/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type UserService struct {
+type AuthService struct {
 	userRepo         repositories.UserRepository
 	refreshTokenRepo repositories.RefreshTokenRepository
 	tokenRepo        repositories.TokenRepository
@@ -30,11 +33,11 @@ type UserService struct {
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
-func NewUserService(ur repositories.UserRepository, refreshTokenRepo repositories.RefreshTokenRepository, tokenRepo repositories.TokenRepository, jwt security.JwtService) *UserService {
-	return &UserService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, tokenRepo: tokenRepo, jwt: jwt}
+func NewUserService(ur repositories.UserRepository, refreshTokenRepo repositories.RefreshTokenRepository, tokenRepo repositories.TokenRepository, jwt security.JwtService) *AuthService {
+	return &AuthService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, tokenRepo: tokenRepo, jwt: jwt}
 }
 
-func (u *UserService) CreateUser(ctx context.Context, req *dtos.RegisterRequest) *common.ErrorResponse {
+func (u *AuthService) CreateUser(ctx context.Context, req *dtos.RegisterRequest) *common.ErrorResponse {
 	if err := u.validateRegisterRequest(req); err != nil {
 		return err
 	}
@@ -134,7 +137,7 @@ func (u *UserService) CreateUser(ctx context.Context, req *dtos.RegisterRequest)
 	return nil
 }
 
-func (u *UserService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.LoginResponse, *common.ErrorResponse) {
+func (u *AuthService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.LoginResponse, *common.ErrorResponse) {
 	if err := u.validateLoginRequest(req); err != nil {
 		return nil, err
 	}
@@ -235,7 +238,7 @@ func (u *UserService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.
 	}, nil
 }
 
-func (u *UserService) Refresh(ctx context.Context, req *dtos.RefreshRequest) (*dtos.RefreshResponse, *common.ErrorResponse) {
+func (u *AuthService) Refresh(ctx context.Context, req *dtos.RefreshRequest) (*dtos.RefreshResponse, *common.ErrorResponse) {
 	if err := u.validateRefreshRequest(req); err != nil {
 		return nil, err
 	}
@@ -359,7 +362,7 @@ func (u *UserService) Refresh(ctx context.Context, req *dtos.RefreshRequest) (*d
 	}, nil
 }
 
-func (u *UserService) Logout(ctx context.Context, req *dtos.LogoutRequest) *common.ErrorResponse {
+func (u *AuthService) Logout(ctx context.Context, req *dtos.LogoutRequest) *common.ErrorResponse {
 	if err := u.validateLogoutRequest(req); err != nil {
 		return err
 	}
@@ -441,7 +444,7 @@ func (u *UserService) Logout(ctx context.Context, req *dtos.LogoutRequest) *comm
 	return nil
 }
 
-func (u *UserService) LogoutAll(ctx context.Context, req *dtos.LogoutRequest) *common.ErrorResponse {
+func (u *AuthService) LogoutAll(ctx context.Context, req *dtos.LogoutRequest) *common.ErrorResponse {
 	if err := u.validateLogoutRequest(req); err != nil {
 		return err
 	}
@@ -504,8 +507,47 @@ func (u *UserService) LogoutAll(ctx context.Context, req *dtos.LogoutRequest) *c
 
 }
 
+
+func (u* AuthService) GetUserByID(ctx context.Context, id string) (*dtos.UserResponse, *common.ErrorResponse) {
+	user, err := u.userRepo.GetUserByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &common.ErrorResponse{
+				Code:    "NOT_FOUND",
+				Message: "user not found",
+				Details: map[string]string{
+					"user": "user not found",
+				},
+			}
+		}
+		return nil, &common.ErrorResponse{
+			Code:    "SERVER_ERROR",
+			Message: "failed to get user",
+			Details: nil,
+		}
+	}
+
+	if user.IsActive == false {
+		return nil, &common.ErrorResponse{
+			Code:    "NOT_FOUND",
+			Message: "user not found",
+			Details: map[string]string{
+				"user": "user not found",
+			},
+		}
+	}
+
+	return &dtos.UserResponse{
+		ID:           user.ID.String(),
+		FirstName:    user.FirstName,
+		LastName:     user.LastName,
+		Email:        user.Email,
+		Username:     user.Username,
+	},nil
+}
+
 // private utils methods
-func (u *UserService) validateRegisterRequest(req *dtos.RegisterRequest) *common.ErrorResponse {
+func (u *AuthService) validateRegisterRequest(req *dtos.RegisterRequest) *common.ErrorResponse {
 	if req == nil {
 		return &common.ErrorResponse{
 			Code:    "VALIDATION_ERROR",
@@ -568,7 +610,7 @@ func (u *UserService) validateRegisterRequest(req *dtos.RegisterRequest) *common
 	return nil
 }
 
-func (u *UserService) validateLoginRequest(req *dtos.LoginRequest) *common.ErrorResponse {
+func (u *AuthService) validateLoginRequest(req *dtos.LoginRequest) *common.ErrorResponse {
 	if req == nil {
 		return &common.ErrorResponse{
 			Code:    "VALIDATION_ERROR",
@@ -604,7 +646,7 @@ func (u *UserService) validateLoginRequest(req *dtos.LoginRequest) *common.Error
 	return nil
 }
 
-func (u *UserService) validateRefreshRequest(req *dtos.RefreshRequest) *common.ErrorResponse {
+func (u *AuthService) validateRefreshRequest(req *dtos.RefreshRequest) *common.ErrorResponse {
 	if req == nil {
 		return &common.ErrorResponse{
 			Code:    "VALIDATION_ERROR",
@@ -633,7 +675,7 @@ func (u *UserService) validateRefreshRequest(req *dtos.RefreshRequest) *common.E
 	return nil
 }
 
-func (u *UserService) validateLogoutRequest(req *dtos.LogoutRequest) *common.ErrorResponse {
+func (u *AuthService) validateLogoutRequest(req *dtos.LogoutRequest) *common.ErrorResponse {
 	if req == nil {
 		return &common.ErrorResponse{
 			Code:    "VALIDATION_ERROR",

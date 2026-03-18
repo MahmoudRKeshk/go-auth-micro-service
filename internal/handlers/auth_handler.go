@@ -3,16 +3,18 @@ package handlers
 import (
 	"go-auth-micro-service/internal/dtos"
 	"go-auth-micro-service/internal/dtos/common"
+	"go-auth-micro-service/internal/middlewares"
 	"go-auth-micro-service/internal/services"
 	"net/http"
 )
 
 type AuthHandler struct {
-	srv *services.UserService
+	srv *services.AuthService
+	middlewares *middlewares.AuthMiddleware
 }
 
-func NewAuthHandler(srv *services.UserService) *AuthHandler {
-	return &AuthHandler{srv: srv}
+func NewAuthHandler(srv *services.AuthService, middlewares *middlewares.AuthMiddleware) *AuthHandler {
+	return &AuthHandler{srv: srv, middlewares: middlewares}
 }
 
 func (h *AuthHandler) Register(rw http.ResponseWriter, r *http.Request) {
@@ -124,6 +126,36 @@ func (h *AuthHandler) LogoutAll(rw http.ResponseWriter, r *http.Request) {
 
 	writeJSON(rw, http.StatusOK, nil)
 }
+
+func (h *AuthHandler) AuthMe(rw http.ResponseWriter, r *http.Request) {
+	userId, ok := h.middlewares.UserIDFromContext(r.Context())
+	if !ok {
+		writeError(rw, http.StatusUnauthorized, &common.ErrorResponse{
+			Code:    "UNAUTHORIZED",
+			Message: "unauthorized",
+			Details: nil,
+		})
+		return
+	}
+	if userId == "" {
+		writeError(rw, http.StatusUnauthorized, &common.ErrorResponse{
+			Code:    "UNAUTHORIZED",
+			Message: "unauthorized",
+			Details: nil,
+		})
+		return
+	}
+
+	resp, errResp := h.srv.GetUserByID(r.Context(), userId)
+	if errResp != nil {
+		writeError(rw, statusCodeFromError(errResp), errResp)
+		return
+	}
+
+	writeJSON(rw, http.StatusOK, resp)
+}
+
+
 
 /*
 
