@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"errors"
+	"github.com/jackc/pgx/v5"
 	"go-auth-micro-service/internal/db"
 	"go-auth-micro-service/internal/models"
 )
@@ -68,4 +70,25 @@ func (t *TokenPostgresRepository) RevokeToken(ctx context.Context, tokenHash str
 	)
 
 	return err
+}
+
+func (r *TokenPostgresRepository) IsTokenRevoked(ctx context.Context, tokenHash string) (bool, error) {
+	query := `
+		SELECT is_revoked
+		FROM tokens
+		WHERE token_hash = $1
+	`
+
+	var isRevoked bool
+
+	err := r.db.Pool.QueryRow(ctx, query, tokenHash).Scan(&isRevoked)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// TODO: later handle missing refresh token
+			return true, nil
+		}
+		return false, err
+	}
+
+	return isRevoked, nil
 }

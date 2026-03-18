@@ -2,7 +2,9 @@ package middlewares
 
 import (
 	"context"
+	"go-auth-micro-service/internal/repositories"
 	"go-auth-micro-service/pkg/security"
+	"go-auth-micro-service/pkg/utils"
 	"net/http"
 	"strings"
 )
@@ -16,7 +18,7 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	return userID, ok
 }
 
-func AuthMiddleware(jwtSrv *security.JwtService, next http.Handler) func(w http.ResponseWriter, r *http.Request) {
+func AuthMiddleware(jwtSrv *security.JwtService, tokenRepo repositories.TokenRepository, next http.Handler) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authorization := r.Header.Get("Authorization")
 		if authorization == "" {
@@ -29,6 +31,19 @@ func AuthMiddleware(jwtSrv *security.JwtService, next http.Handler) func(w http.
 		}
 
 		token := strings.TrimPrefix(authorization, "Bearer ")
+		tokenHash := utils.HashToken(token)
+
+		isRevoked, err := tokenRepo.IsTokenRevoked(r.Context(), tokenHash)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		if isRevoked {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
 		claims, err := jwtSrv.ParseToken(token)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)

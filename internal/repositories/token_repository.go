@@ -9,4 +9,5 @@ type TokenRepository interface {
 	InsertToken(ctx context.Context, token *models.Token) error
 	RevokeNonExpiredTokens(ctx context.Context, userId string) error
 	RevokeToken(ctx context.Context, tokenHash string) error
+	IsTokenRevoked(ctx context.Context, tokenHash string) (bool, error)
 }
