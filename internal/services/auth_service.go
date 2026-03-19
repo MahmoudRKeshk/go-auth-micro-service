@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"go-auth-micro-service/internal/dtos/common"
+	"go-auth-micro-service/internal/apperrors"
 	"go-auth-micro-service/internal/models"
 	"go-auth-micro-service/internal/repositories"
 	"go-auth-micro-service/pkg/security"
@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"fmt"
-	"go-auth-micro-service/internal/dtos"
-
 	"sync"
 
 	"github.com/gofrs/uuid"
@@ -37,72 +35,70 @@ func NewUserService(ur repositories.UserRepository, refreshTokenRepo repositorie
 	return &AuthService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, tokenRepo: tokenRepo, jwt: jwt}
 }
 
-func (u *AuthService) CreateUser(ctx context.Context, req *dtos.RegisterRequest) *common.ErrorResponse {
-	if err := u.validateRegisterRequest(req); err != nil {
+func (u *AuthService) CreateUser(ctx context.Context, input RegisterInput) *apperrors.AppError {
+	if err := u.validateRegisterRequest(input); err != nil {
 		return err
 	}
 
-	email := strings.TrimSpace(req.Email)
-	username := strings.TrimSpace(req.Username)
-	firstName := strings.TrimSpace(req.FirstName)
-	lastName := strings.TrimSpace(req.LastName)
+	email := strings.TrimSpace(input.Email)
+	username := strings.TrimSpace(input.Username)
+	firstName := strings.TrimSpace(input.FirstName)
+	lastName := strings.TrimSpace(input.LastName)
 
 	// Check if email already exists
 	emailExists, err := u.userRepo.EmailExists(ctx, email)
 	if err != nil {
-		return &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to create user",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to create user: failed to check if email exists",
+			Err:     err,
 			Details: nil,
 		}
 	}
 	if emailExists {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
-			Message: "email already exists",
-			Details: map[string]string{
-				"email": "email is already registered",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeConflict,
+			Message: "email already exists: email is already registered",
+			Err:     nil,
+			Details: map[string]string{"email": "email is already registered"},
 		}
 	}
 
 	// Check if username already exists
 	usernameExists, err := u.userRepo.UsernameExists(ctx, username)
 	if err != nil {
-		return &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
 			Message: "failed to create user",
-			Details: map[string]string{
-				"username": "username is already taken",
-			},
+			Err:     err,
+			Details: nil,
 		}
 	}
 	if usernameExists {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
-			Message: "username already exists",
-			Details: map[string]string{
-				"username": "username is already taken",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeConflict,
+			Message: "username already exists: username is already taken",
+			Err:     nil,
+			Details: map[string]string{"username": "username is already taken"},
 		}
 	}
 
-	passwordHash, err := utils.HashPassword(req.Password)
+	passwordHash, err := utils.HashPassword(input.Password)
 	if err != nil {
-		return &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to create user",
-			Details: map[string]string{
-				"password": "failed to hash password",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to create user: failed to hash password",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
 	rawID, err := uuid.NewV4()
 	if err != nil {
-		return &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to create user",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to create user: failed to generate user id",
+			Err:     err,
 			Details: nil,
 		}
 	}
@@ -123,12 +119,11 @@ func (u *AuthService) CreateUser(ctx context.Context, req *dtos.RegisterRequest)
 	createdUser, err := u.userRepo.CreateUser(ctx, user)
 	if err != nil {
 		fmt.Printf("failed to create user: %v\n", err)
-		return &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to create user",
-			Details: map[string]string{
-				"user": "failed to create user",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to create user: failed to create user",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
@@ -137,19 +132,20 @@ func (u *AuthService) CreateUser(ctx context.Context, req *dtos.RegisterRequest)
 	return nil
 }
 
-func (u *AuthService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.LoginResponse, *common.ErrorResponse) {
-	if err := u.validateLoginRequest(req); err != nil {
+func (u *AuthService) Login(ctx context.Context, input LoginInput) (*LoginResult, *apperrors.AppError) {
+	if err := u.validateLoginRequest(input); err != nil {
 		return nil, err
 	}
 
-	email := strings.TrimSpace(req.Email)
-	password := strings.TrimSpace(req.Password)
+	email := strings.TrimSpace(input.Email)
+	password := strings.TrimSpace(input.Password)
 
 	user, err := u.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "NOT_FOUND",
-			Message: "user not found",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
+			Message: "user not found: email not found",
+			Err:     err,
 			Details: map[string]string{
 				"email": "email not found",
 			},
@@ -158,32 +154,31 @@ func (u *AuthService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.
 
 	isPasswordValid := utils.CheckPasswordHash(password, user.PasswordHash)
 	if !isPasswordValid {
-		return nil, &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid credentials",
-			Details: map[string]string{
-				"request": "invalid credentials",
-			},
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "invalid credentials: invalid password",
+			Err:     nil,
+			Details: nil,
 		}
 	}
 
 	refreshToken, err := u.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Hour*24*7))
 	accessToken, err := u.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Minute*15))
 	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to login",
-			Details: map[string]string{
-				"request": "failed to generate tokens",
-			},
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to generate access token",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
 	rawID, err := uuid.NewV4()
 	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to create user",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to generate access token",
+			Err:     err,
 			Details: nil,
 		}
 	}
@@ -226,63 +221,62 @@ func (u *AuthService) Login(ctx context.Context, req *dtos.LoginRequest) (*dtos.
 	wg.Wait()
 
 	if err01 != nil || err02 != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to create login",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to create refresh token",
+			Err:     err,
 			Details: nil,
 		}
 	}
-	return &dtos.LoginResponse{
+	return &LoginResult{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 	}, nil
 }
 
-func (u *AuthService) Refresh(ctx context.Context, req *dtos.RefreshRequest) (*dtos.RefreshResponse, *common.ErrorResponse) {
-	if err := u.validateRefreshRequest(req); err != nil {
+func (u *AuthService) Refresh(ctx context.Context, input RefreshInput) (*RefreshResult, *apperrors.AppError) {
+	if err := u.validateRefreshRequest(input); err != nil {
 		return nil, err
 	}
 
-	oldToken := strings.TrimSpace(req.RefreshToken)
+	oldToken := strings.TrimSpace(input.RefreshToken)
 
 	parsedRefreshToken, err := u.jwt.ParseToken(oldToken)
 	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid refresh token",
-			Details: map[string]string{
-				"refresh_token": "invalid refresh token",
-			},
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "failed to parse refresh token",
+			Err:     err,
+			Details: nil,
 		}
 	}
 	userID, ok := parsedRefreshToken["userId"].(string)
 	if !ok || userID == "" {
-		return nil, &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid refresh token",
-			Details: map[string]string{
-				"refresh_token": "invalid refresh token claims",
-			},
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "failed to fetch user id from the context",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
 	expTime, err := parsedRefreshToken.GetExpirationTime()
 	if err != nil || expTime == nil {
-		return nil, &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid refresh token",
-			Details: map[string]string{
-				"refresh_token": "missing expiration claim",
-			},
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "failed to fetch expiration time from the refresh token",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
 	if time.Now().After(expTime.Time) {
-		return nil, &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
 			Message: "refresh token expired",
+			Err:     err,
 			Details: map[string]string{
-				"refresh_token": "refresh token expired",
+				"refresh_token": "refresh token has expired",
 			},
 		}
 	}
@@ -291,48 +285,67 @@ func (u *AuthService) Refresh(ctx context.Context, req *dtos.RefreshRequest) (*d
 	IsRefreshTokenRevoked, err := u.refreshTokenRepo.IsRefreshTokenRevoked(ctx, refreshTokenHash)
 
 	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to refresh token",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to check if refresh token is revoked",
+			Err:     err,
 			Details: nil,
 		}
 	}
 
 	if IsRefreshTokenRevoked {
-		return nil, &common.ErrorResponse{
-			Code:    "NOT_FOUND",
-			Message: "refresh token revoked",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "refresh token has been revoked",
+			Err:     err,
 			Details: map[string]string{
-				"refresh_token": "invalid refresh token, it has been revoked",
+				"refresh_token": "refresh token has been revoked",
 			},
 		}
 	}
 
 	user, err := u.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "NOT_FOUND",
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeNotFound,
+				Message: "user not found",
+				Err:     err,
+				Details: nil,
+			}
+		}
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to get user",
+			Err:     err,
+			Details: nil,
+		}
+	}
+	if user.IsActive == false {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
 			Message: "user not found",
-			Details: map[string]string{
-				"user": "user not found",
-			},
+			Err:     err,
+			Details: nil,
 		}
 	}
 
 	accessToken, err := u.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Minute*15))
 	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to refresh token",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to generate access token",
+			Err:     err,
 			Details: nil,
 		}
 	}
 	accessTokenHash := utils.HashToken(accessToken)
 	rawID, err := uuid.NewV4()
 	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to refresh token",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to generate access token",
+			Err:     err,
 			Details: nil,
 		}
 	}
@@ -348,65 +361,62 @@ func (u *AuthService) Refresh(ctx context.Context, req *dtos.RefreshRequest) (*d
 
 	err = u.tokenRepo.InsertToken(ctx, &accessTokenEntity)
 	if err != nil {
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to refresh token",
-			Details: map[string]string{
-				"refresh_token": "failed to generate tokens",
-			},
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to insert access token",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
-	return &dtos.RefreshResponse{
+	return &RefreshResult{
 		AccessToken: accessToken,
 	}, nil
 }
 
-func (u *AuthService) Logout(ctx context.Context, req *dtos.LogoutRequest) *common.ErrorResponse {
-	if err := u.validateLogoutRequest(req); err != nil {
+func (u *AuthService) Logout(ctx context.Context, input LogoutInput) *apperrors.AppError {
+	if err := u.validateLogoutRequest(input); err != nil {
 		return err
 	}
 
-	refreshToken := strings.TrimSpace(req.RefreshToken)
+	refreshToken := strings.TrimSpace(input.RefreshToken)
 
 	parsedRefreshToken, err := u.jwt.ParseToken(refreshToken)
 	if err != nil {
-		return &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid refresh token",
-			Details: map[string]string{
-				"refresh_token": "invalid refresh token",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "failed to parse refresh token",
+			Err:     err,
+			Details: nil,
 		}
 	}
 	userID, ok := parsedRefreshToken["userId"].(string)
 	if !ok || userID == "" {
-		return &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid refresh token",
-			Details: map[string]string{
-				"refresh_token": "invalid refresh token claims",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "failed to fetch user id from the context",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
 	expTime, err := parsedRefreshToken.GetExpirationTime()
 	if err != nil || expTime == nil {
-		return &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid refresh token",
-			Details: map[string]string{
-				"refresh_token": "missing expiration claim",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "failed to fetch expiration time from the refresh token",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
 	if time.Now().After(expTime.Time) {
-		return &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "refresh token expired",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "refresh token has expired",
+			Err:     err,
 			Details: map[string]string{
-				"refresh_token": "refresh token expired",
+				"refresh_token": "refresh token has expired",
 			},
 		}
 	}
@@ -415,28 +425,31 @@ func (u *AuthService) Logout(ctx context.Context, req *dtos.LogoutRequest) *comm
 	IsRefreshTokenRevoked, err := u.refreshTokenRepo.IsRefreshTokenRevoked(ctx, refreshTokenHash)
 
 	if err != nil {
-		return &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
-			Message: "failed to refresh token",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to check if refresh token is revoked",
+			Err:     err,
 			Details: nil,
 		}
 	}
 
 	if IsRefreshTokenRevoked {
-		return &common.ErrorResponse{
-			Code:    "NOT_FOUND",
-			Message: "refresh token revoked",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "refresh token has been revoked",
+			Err:     err,
 			Details: map[string]string{
-				"refresh_token": "invalid refresh token, it has been revoked",
+				"refresh_token": "refresh token has been revoked",
 			},
 		}
 	}
 
 	err = u.refreshTokenRepo.RevokeRefreshToken(ctx, refreshTokenHash)
 	if err != nil {
-		return &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
 			Message: "failed to revoke refresh token",
+			Err:     err,
 			Details: nil,
 		}
 	}
@@ -444,42 +457,39 @@ func (u *AuthService) Logout(ctx context.Context, req *dtos.LogoutRequest) *comm
 	return nil
 }
 
-func (u *AuthService) LogoutAll(ctx context.Context, req *dtos.LogoutRequest) *common.ErrorResponse {
-	if err := u.validateLogoutRequest(req); err != nil {
+func (u *AuthService) LogoutAll(ctx context.Context, input LogoutInput) *apperrors.AppError {
+	if err := u.validateLogoutRequest(input); err != nil {
 		return err
 	}
 
-	refreshToken := strings.TrimSpace(req.RefreshToken)
+	refreshToken := strings.TrimSpace(input.RefreshToken)
 
 	parsedRefreshToken, err := u.jwt.ParseToken(refreshToken)
 	if err != nil {
-		return &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid refresh token",
-			Details: map[string]string{
-				"refresh_token": "invalid refresh token",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "failed to parse refresh token",
+			Err:     err,
+			Details: nil,
 		}
 	}
 	userID, ok := parsedRefreshToken["userId"].(string)
 	if !ok || userID == "" {
-		return &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid refresh token",
-			Details: map[string]string{
-				"refresh_token": "invalid refresh token claims",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "failed to fetch user id from the context",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
 	expTime, err := parsedRefreshToken.GetExpirationTime()
 	if err != nil || expTime == nil {
-		return &common.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid refresh token",
-			Details: map[string]string{
-				"refresh_token": "missing expiration claim",
-			},
+		return &apperrors.AppError{
+			Code:    apperrors.CodeUnauthorized,
+			Message: "failed to fetch expiration time from the refresh token",
+			Err:     err,
+			Details: nil,
 		}
 	}
 
@@ -497,67 +507,60 @@ func (u *AuthService) LogoutAll(ctx context.Context, req *dtos.LogoutRequest) *c
 	wg.Wait()
 
 	if err01 != nil || err02 != nil {
-		return &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
 			Message: "failed to logout all",
-			Details: nil,
+			Err:     err,
+			Details: map[string]string{
+				"refresh_token": "failed to logout all",
+			},
 		}
 	}
 	return nil
 
 }
 
-
-func (u* AuthService) GetUserByID(ctx context.Context, id string) (*dtos.UserResponse, *common.ErrorResponse) {
+func (u *AuthService) GetUserByID(ctx context.Context, id string) (*UserResult, *apperrors.AppError) {
 	user, err := u.userRepo.GetUserByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, &common.ErrorResponse{
-				Code:    "NOT_FOUND",
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeNotFound,
 				Message: "user not found",
-				Details: map[string]string{
-					"user": "user not found",
-				},
+				Err:     err,
+				Details: nil,
 			}
 		}
-		return nil, &common.ErrorResponse{
-			Code:    "SERVER_ERROR",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
 			Message: "failed to get user",
-			Details: nil,
+			Err:     err,
+			Details: map[string]string{
+				"user": "failed to get user",
+			},
 		}
 	}
 
 	if user.IsActive == false {
-		return nil, &common.ErrorResponse{
-			Code:    "NOT_FOUND",
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
 			Message: "user not found",
-			Details: map[string]string{
-				"user": "user not found",
-			},
+			Err:     err,
+			Details: nil,
 		}
 	}
 
-	return &dtos.UserResponse{
-		ID:           user.ID.String(),
-		FirstName:    user.FirstName,
-		LastName:     user.LastName,
-		Email:        user.Email,
-		Username:     user.Username,
-	},nil
+	return &UserResult{
+		ID:        user.ID.String(),
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
+		Email:     user.Email,
+		Username:  user.Username,
+	}, nil
 }
 
 // private utils methods
-func (u *AuthService) validateRegisterRequest(req *dtos.RegisterRequest) *common.ErrorResponse {
-	if req == nil {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
-			Message: "invalid register request",
-			Details: map[string]string{
-				"request": "request body is required",
-			},
-		}
-	}
-
+func (u *AuthService) validateRegisterRequest(req RegisterInput) *apperrors.AppError {
 	errors := make(map[string]string)
 
 	email := strings.TrimSpace(req.Email)
@@ -593,16 +596,17 @@ func (u *AuthService) validateRegisterRequest(req *dtos.RegisterRequest) *common
 		errors["last_name"] = "last name must not exceed 50 characters"
 	}
 
-	if req.Password == "" {
+	if strings.TrimSpace(req.Password) == "" {
 		errors["password"] = "password is required"
 	} else if len(req.Password) < 8 || len(req.Password) > 72 {
 		errors["password"] = "password must be between 8 and 72 characters"
 	}
 
 	if len(errors) > 0 {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeValidation,
 			Message: "invalid register request",
+			Err:     nil,
 			Details: errors,
 		}
 	}
@@ -610,16 +614,7 @@ func (u *AuthService) validateRegisterRequest(req *dtos.RegisterRequest) *common
 	return nil
 }
 
-func (u *AuthService) validateLoginRequest(req *dtos.LoginRequest) *common.ErrorResponse {
-	if req == nil {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
-			Message: "invalid login request",
-			Details: map[string]string{
-				"request": "request body is required",
-			},
-		}
-	}
+func (u *AuthService) validateLoginRequest(req LoginInput) *apperrors.AppError {
 	errors := make(map[string]string)
 
 	email := strings.TrimSpace(req.Email)
@@ -636,9 +631,10 @@ func (u *AuthService) validateLoginRequest(req *dtos.LoginRequest) *common.Error
 	}
 
 	if len(errors) > 0 {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeValidation,
 			Message: "invalid login request",
+			Err:     nil,
 			Details: errors,
 		}
 	}
@@ -646,16 +642,7 @@ func (u *AuthService) validateLoginRequest(req *dtos.LoginRequest) *common.Error
 	return nil
 }
 
-func (u *AuthService) validateRefreshRequest(req *dtos.RefreshRequest) *common.ErrorResponse {
-	if req == nil {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
-			Message: "invalid refresh request",
-			Details: map[string]string{
-				"request": "request body is required",
-			},
-		}
-	}
+func (u *AuthService) validateRefreshRequest(req RefreshInput) *apperrors.AppError {
 	errors := make(map[string]string)
 
 	refreshToken := strings.TrimSpace(req.RefreshToken)
@@ -665,9 +652,10 @@ func (u *AuthService) validateRefreshRequest(req *dtos.RefreshRequest) *common.E
 	}
 
 	if len(errors) > 0 {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeValidation,
 			Message: "invalid refresh request",
+			Err:     nil,
 			Details: errors,
 		}
 	}
@@ -675,16 +663,7 @@ func (u *AuthService) validateRefreshRequest(req *dtos.RefreshRequest) *common.E
 	return nil
 }
 
-func (u *AuthService) validateLogoutRequest(req *dtos.LogoutRequest) *common.ErrorResponse {
-	if req == nil {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
-			Message: "invalid logout request",
-			Details: map[string]string{
-				"request": "request body is required",
-			},
-		}
-	}
+func (u *AuthService) validateLogoutRequest(req LogoutInput) *apperrors.AppError {
 	errors := make(map[string]string)
 
 	refreshToken := strings.TrimSpace(req.RefreshToken)
@@ -694,9 +673,10 @@ func (u *AuthService) validateLogoutRequest(req *dtos.LogoutRequest) *common.Err
 	}
 
 	if len(errors) > 0 {
-		return &common.ErrorResponse{
-			Code:    "VALIDATION_ERROR",
+		return &apperrors.AppError{
+			Code:    apperrors.CodeValidation,
 			Message: "invalid logout request",
+			Err:     nil,
 			Details: errors,
 		}
 	}

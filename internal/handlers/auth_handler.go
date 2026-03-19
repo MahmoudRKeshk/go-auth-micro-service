@@ -9,7 +9,7 @@ import (
 )
 
 type AuthHandler struct {
-	srv *services.AuthService
+	srv         *services.AuthService
 	middlewares *middlewares.AuthMiddleware
 }
 
@@ -30,9 +30,15 @@ func (h *AuthHandler) Register(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errResp := h.srv.CreateUser(r.Context(), &req)
-	if errResp != nil {
-		writeError(rw, statusCodeFromError(errResp), errResp)
+	appErr := h.srv.CreateUser(r.Context(), services.RegisterInput{
+		Email:     req.Email,
+		Username:  req.Username,
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Password:  req.Password,
+	})
+	if appErr != nil {
+		writeAppError(rw, "failed to create user", appErr)
 		return
 	}
 
@@ -52,13 +58,19 @@ func (h *AuthHandler) Login(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, errResp := h.srv.Login(r.Context(), &req)
-	if errResp != nil {
-		writeError(rw, statusCodeFromError(errResp), errResp)
+	res, appErr := h.srv.Login(r.Context(), services.LoginInput{
+		Email:    req.Email,
+		Password: req.Password,
+	})
+	if appErr != nil {
+		writeAppError(rw, "failed to login", appErr)
 		return
 	}
 
-	writeJSON(rw, http.StatusOK, resp)
+	writeJSON(rw, http.StatusOK, &dtos.LoginResponse{
+		AccessToken:  res.AccessToken,
+		RefreshToken: res.RefreshToken,
+	})
 }
 
 func (h *AuthHandler) Refresh(rw http.ResponseWriter, r *http.Request) {
@@ -74,13 +86,17 @@ func (h *AuthHandler) Refresh(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, errResp := h.srv.Refresh(r.Context(), &req)
-	if errResp != nil {
-		writeError(rw, statusCodeFromError(errResp), errResp)
+	res, appErr := h.srv.Refresh(r.Context(), services.RefreshInput{
+		RefreshToken: req.RefreshToken,
+	})
+	if appErr != nil {
+		writeAppError(rw, "failed to refresh", appErr)
 		return
 	}
 
-	writeJSON(rw, http.StatusOK, resp)
+	writeJSON(rw, http.StatusOK, &dtos.RefreshResponse{
+		AccessToken: res.AccessToken,
+	})
 }
 
 func (h *AuthHandler) Logout(rw http.ResponseWriter, r *http.Request) {
@@ -96,9 +112,11 @@ func (h *AuthHandler) Logout(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errResp := h.srv.Logout(r.Context(), &req)
-	if errResp != nil {
-		writeError(rw, statusCodeFromError(errResp), errResp)
+	appErr := h.srv.Logout(r.Context(), services.LogoutInput{
+		RefreshToken: req.RefreshToken,
+	})
+	if appErr != nil {
+		writeAppError(rw, "failed to logout", appErr)
 		return
 	}
 
@@ -118,12 +136,13 @@ func (h *AuthHandler) LogoutAll(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errResp := h.srv.LogoutAll(r.Context(), &req)
-	if errResp != nil {
-		writeError(rw, statusCodeFromError(errResp), errResp)
+	appErr := h.srv.LogoutAll(r.Context(), services.LogoutInput{
+		RefreshToken: req.RefreshToken,
+	})
+	if appErr != nil {
+		writeAppError(rw, "failed to logout all", appErr)
 		return
 	}
-
 	writeJSON(rw, http.StatusOK, nil)
 }
 
@@ -146,27 +165,17 @@ func (h *AuthHandler) AuthMe(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, errResp := h.srv.GetUserByID(r.Context(), userId)
-	if errResp != nil {
-		writeError(rw, statusCodeFromError(errResp), errResp)
+	res, appErr := h.srv.GetUserByID(r.Context(), userId)
+	if appErr != nil {
+		writeAppError(rw, "failed to get user", appErr)
 		return
 	}
 
-	writeJSON(rw, http.StatusOK, resp)
+	writeJSON(rw, http.StatusOK, &dtos.UserResponse{
+		ID:        res.ID,
+		FirstName: res.FirstName,
+		LastName:  res.LastName,
+		Email:     res.Email,
+		Username:  res.Username,
+	})
 }
-
-
-
-/*
-
-POST /auth/register -> Implemented
-POST /auth/login -> Implemented
-POST /auth/refresh -> Implemented
-POST /auth/logout -> Implemented
-POST /auth/logout-all -> Implemented
-GET /auth/me -> Not Implemented
-POST /auth/change-password -> Not Implemented
-GET /auth/sessions -> Not Implemented
-DELETE /auth/sessions/{refreshTokenId} -> Not Implemented
-
-*/

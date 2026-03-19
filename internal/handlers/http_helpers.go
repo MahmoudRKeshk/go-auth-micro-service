@@ -3,7 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"go-auth-micro-service/internal/apperrors"
 	"go-auth-micro-service/internal/dtos/common"
+	"log"
 	"net/http"
 )
 
@@ -36,15 +38,35 @@ func writeError(rw http.ResponseWriter, status int, errResp *common.ErrorRespons
 	writeJSON(rw, status, errResp)
 }
 
-func statusCodeFromError(errResp *common.ErrorResponse) int {
-	switch errResp.Code {
-	case "VALIDATION_ERROR":
+func writeAppError(rw http.ResponseWriter, operation string, appErr *apperrors.AppError) {
+	log.Printf("%s: %v", operation, appErr)
+	for field, detail := range appErr.Details {
+		log.Printf("%s: %s", field, detail)
+	}
+
+	httpErr := toErrorResponse(appErr)
+	writeError(rw, statusCodeFromAppError(appErr), httpErr)
+}
+
+func toErrorResponse(appErr *apperrors.AppError) *common.ErrorResponse {
+	return &common.ErrorResponse{
+		Code:    string(appErr.Code),
+		Message: appErr.Message,
+		Details: appErr.Details,
+	}
+}
+
+func statusCodeFromAppError(appErr *apperrors.AppError) int {
+	switch appErr.Code {
+	case apperrors.CodeValidation:
 		return http.StatusBadRequest
-	case "NOT_FOUND":
+	case apperrors.CodeNotFound:
 		return http.StatusNotFound
-	case "BAD_REQUEST":
-		return http.StatusBadRequest
-	case "SERVER_ERROR":
+	case apperrors.CodeConflict:
+		return http.StatusConflict
+	case apperrors.CodeUnauthorized:
+		return http.StatusUnauthorized
+	case apperrors.CodeInternal:
 		return http.StatusInternalServerError
 	default:
 		return http.StatusInternalServerError
