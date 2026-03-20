@@ -2,16 +2,16 @@ package main
 
 import (
 	"context"
-	"go-auth-micro-service/internal/config"
-	"go-auth-micro-service/internal/db"
-	"go-auth-micro-service/internal/handlers"
-	"go-auth-micro-service/internal/repositories/postgres"
-	"go-auth-micro-service/internal/routes"
-	"go-auth-micro-service/internal/services"
-	"go-auth-micro-service/pkg/security"
+	"go-auth-micro-service/internal/auth/api"
+	authpostgres "go-auth-micro-service/internal/auth/repository/postgres"
+	"go-auth-micro-service/internal/auth/service"
+	"go-auth-micro-service/internal/platform/config"
+	"go-auth-micro-service/internal/platform/db"
+	"go-auth-micro-service/internal/platform/middlewares"
+	"go-auth-micro-service/internal/platform/security"
+	userspostgres "go-auth-micro-service/internal/users/repository/postgres"
 	"log"
 	"net/http"
-	"go-auth-micro-service/internal/middlewares"
 )
 
 func main() {
@@ -24,17 +24,17 @@ func main() {
 	postgresDB := db.NewPostgres(context.Background(), cfg)
 	defer postgresDB.Pool.Close()
 
-	userRepo := postgres.NewUserRepository(postgresDB)
-	refreshTokenRepo := postgres.NewRefreshTokenRepository(postgresDB)
-	tokenRepo := postgres.NewTokenRepository(postgresDB)
+	userRepo := userspostgres.NewUserRepository(postgresDB)
+	refreshTokenRepo := authpostgres.NewRefreshTokenRepository(postgresDB)
+	tokenRepo := authpostgres.NewTokenRepository(postgresDB)
 	JwtService := security.NewJwtService(cfg.GetJwtSecret())
-	userService := services.NewUserService(userRepo, refreshTokenRepo, tokenRepo, *JwtService)
-	middlewares := middlewares.NewMiddlewares(JwtService, tokenRepo)
+	userService := service.NewUserService(userRepo, refreshTokenRepo, tokenRepo, *JwtService)
+	authMiddleware := middlewares.NewMiddlewares(JwtService, tokenRepo)
 
-	authHandler := handlers.NewAuthHandler(userService, middlewares)
+	authHandler := api.NewAuthHandler(userService, authMiddleware)
 	mux := http.NewServeMux()
 
-	routes.RegisterRoutes(mux, authHandler, middlewares)
+	api.RegisterRoutes(mux, authHandler, authMiddleware)
 
 	serverAddr := cfg.GetServerPort()
 	log.Printf("server listening on %s", serverAddr)
