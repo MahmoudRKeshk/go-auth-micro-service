@@ -11,5 +11,4 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS refresh_tokens_user_id_idx ON refresh_tokens (user_id);
-
 CREATE UNIQUE INDEX IF NOT EXISTS refresh_tokens_token_hash_user_id_idx ON refresh_tokens (user_id, token_hash);

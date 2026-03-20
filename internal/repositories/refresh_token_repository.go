@@ -6,8 +6,9 @@ import (
 )
 
 type RefreshTokenRepository interface {
-	InsertRefreshToken(ctx context.Context, refreshToken *models.RefreshToken) error
-	IsRefreshTokenRevoked(ctx context.Context, refreshTokenHash string) (bool, error)
+	GetRefreshTokenByTokenHashAndUserID(ctx context.Context, refreshTokenHash string, userID string) (*models.RefreshToken, error)
+	InsertRefreshToken(ctx context.Context, refreshToken *models.RefreshToken) (*models.RefreshToken, error)
+	IsRefreshTokenRevoked(ctx context.Context, refreshTokenHash string, userID string) (bool, error)
 	RevokeNonExpiredRefreshTokens(ctx context.Context, userId string) error
-	RevokeRefreshToken(ctx context.Context, refreshTokenHash string) error
+	RevokeRefreshToken(ctx context.Context, refreshTokenHash string, userID string) error
 }

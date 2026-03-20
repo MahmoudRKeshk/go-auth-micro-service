@@ -15,4 +15,5 @@ type Token struct {
 	CreatedAt time.Time
 	IsRevoked bool
 	RevokedAt sql.NullTime
+	RefreshTokenID pgtype.UUID
 }

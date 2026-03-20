@@ -1,3 +1,4 @@
+
 package postgres
 
 import (
@@ -19,9 +20,9 @@ func NewTokenRepository(db *db.Postgres) *TokenPostgresRepository {
 func (t *TokenPostgresRepository) InsertToken(ctx context.Context, token *models.Token) error {
 	query := `
 		INSERT INTO tokens (
-			id, user_id, token_hash, expires_at, is_revoked, revoked_at, created_at
+			id, user_id, token_hash, expires_at, is_revoked, revoked_at, created_at, refresh_token_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 	res, err := t.db.Pool.Exec(
 		ctx,
@@ -33,6 +34,7 @@ func (t *TokenPostgresRepository) InsertToken(ctx context.Context, token *models
 		token.IsRevoked,
 		token.RevokedAt,
 		token.CreatedAt,
+		token.RefreshTokenID,
 	)
 
 	if err != nil || res.RowsAffected() == 0 {

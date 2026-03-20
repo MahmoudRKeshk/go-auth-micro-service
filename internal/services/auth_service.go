@@ -186,7 +186,7 @@ func (u *AuthService) Login(ctx context.Context, input LoginInput) (*LoginResult
 	refreshTokenHash := utils.HashToken(refreshToken)
 	accessTokenHash := utils.HashToken(accessToken)
 
-	refreshTokenEntity := models.RefreshToken{
+	refreshTokenEntity := &models.RefreshToken{
 		ID:         pgtype.UUID{Bytes: rawID, Valid: true},
 		UserID:     user.ID,
 		TokenHash:  refreshTokenHash,
@@ -197,37 +197,38 @@ func (u *AuthService) Login(ctx context.Context, input LoginInput) (*LoginResult
 		CreatedAt:  time.Now(),
 	}
 
-	tokenEntity := models.Token{
-		ID:        pgtype.UUID{Bytes: rawID, Valid: true},
-		UserID:    user.ID,
-		TokenHash: accessTokenHash,
-		ExpiresAt: time.Now().Add(time.Minute * 15),
-		CreatedAt: time.Now(),
-		IsRevoked: false,
-		RevokedAt: sql.NullTime{},
-	}
-
-	wg := sync.WaitGroup{}
-	var err01 error
-	var err02 error
-
-	wg.Go(func() {
-		err01 = u.refreshTokenRepo.InsertRefreshToken(ctx, &refreshTokenEntity)
-	})
-	wg.Go(func() {
-		err02 = u.tokenRepo.InsertToken(ctx, &tokenEntity)
-	})
-
-	wg.Wait()
-
-	if err01 != nil || err02 != nil {
+	// TODO: introduce transaction here between refresh token and token
+	refreshTokenEntity, err = u.refreshTokenRepo.InsertRefreshToken(ctx, refreshTokenEntity)
+	if err != nil {
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeInternal,
-			Message: "failed to create refresh token",
+			Message: "failed to insert refresh token",
 			Err:     err,
 			Details: nil,
 		}
 	}
+
+	tokenEntity := models.Token{
+		ID:             pgtype.UUID{Bytes: rawID, Valid: true},
+		UserID:         user.ID,
+		TokenHash:      accessTokenHash,
+		ExpiresAt:      time.Now().Add(time.Minute * 15),
+		CreatedAt:      time.Now(),
+		IsRevoked:      false,
+		RevokedAt:      sql.NullTime{},
+		RefreshTokenID: refreshTokenEntity.ID,
+	}
+
+	err = u.tokenRepo.InsertToken(ctx, &tokenEntity)
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternal,
+			Message: "failed to insert access token",
+			Err:     err,
+			Details: nil,
+		}
+	}
+
 	return &LoginResult{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -282,18 +283,40 @@ func (u *AuthService) Refresh(ctx context.Context, input RefreshInput) (*Refresh
 	}
 
 	refreshTokenHash := utils.HashToken(oldToken)
-	IsRefreshTokenRevoked, err := u.refreshTokenRepo.IsRefreshTokenRevoked(ctx, refreshTokenHash)
 
-	if err != nil {
+	wg := sync.WaitGroup{}
+	var refreshTokenErr error
+	var userErr error
+	var refreshToken *models.RefreshToken
+	var user models.User
+
+	wg.Go(func() {
+		refreshToken, refreshTokenErr = u.refreshTokenRepo.GetRefreshTokenByTokenHashAndUserID(ctx, refreshTokenHash, userID)
+	})
+	wg.Go(func() {
+		user, userErr = u.userRepo.GetUserByID(ctx, userID)
+	})
+
+	wg.Wait()
+
+	if refreshTokenErr != nil {
+		if errors.Is(refreshTokenErr, pgx.ErrNoRows) {
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeUnauthorized,
+				Message: "invalid refresh token",
+				Err:     err,
+				Details: nil,
+			}
+		}
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeInternal,
-			Message: "failed to check if refresh token is revoked",
+			Message: "failed to get refresh token",
 			Err:     err,
 			Details: nil,
 		}
 	}
 
-	if IsRefreshTokenRevoked {
+	if refreshToken.IsRevoked {
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeUnauthorized,
 			Message: "refresh token has been revoked",
@@ -304,9 +327,8 @@ func (u *AuthService) Refresh(ctx context.Context, input RefreshInput) (*Refresh
 		}
 	}
 
-	user, err := u.userRepo.GetUserByID(ctx, userID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	if userErr != nil {
+		if errors.Is(userErr, pgx.ErrNoRows) {
 			return nil, &apperrors.AppError{
 				Code:    apperrors.CodeNotFound,
 				Message: "user not found",
@@ -350,13 +372,14 @@ func (u *AuthService) Refresh(ctx context.Context, input RefreshInput) (*Refresh
 		}
 	}
 	accessTokenEntity := models.Token{
-		ID:        pgtype.UUID{Bytes: rawID, Valid: true},
-		UserID:    user.ID,
-		TokenHash: accessTokenHash,
-		ExpiresAt: time.Now().Add(time.Minute * 15),
-		CreatedAt: time.Now(),
-		IsRevoked: false,
-		RevokedAt: sql.NullTime{},
+		ID:             pgtype.UUID{Bytes: rawID, Valid: true},
+		UserID:         user.ID,
+		TokenHash:      accessTokenHash,
+		ExpiresAt:      time.Now().Add(time.Minute * 15),
+		CreatedAt:      time.Now(),
+		IsRevoked:      false,
+		RevokedAt:      sql.NullTime{},
+		RefreshTokenID: refreshToken.ID,
 	}
 
 	err = u.tokenRepo.InsertToken(ctx, &accessTokenEntity)
@@ -422,7 +445,7 @@ func (u *AuthService) Logout(ctx context.Context, input LogoutInput) *apperrors.
 	}
 
 	refreshTokenHash := utils.HashToken(refreshToken)
-	IsRefreshTokenRevoked, err := u.refreshTokenRepo.IsRefreshTokenRevoked(ctx, refreshTokenHash)
+	IsRefreshTokenRevoked, err := u.refreshTokenRepo.IsRefreshTokenRevoked(ctx, refreshTokenHash, userID)
 
 	if err != nil {
 		return &apperrors.AppError{
@@ -444,7 +467,7 @@ func (u *AuthService) Logout(ctx context.Context, input LogoutInput) *apperrors.
 		}
 	}
 
-	err = u.refreshTokenRepo.RevokeRefreshToken(ctx, refreshTokenHash)
+	err = u.refreshTokenRepo.RevokeRefreshToken(ctx, refreshTokenHash, userID)
 	if err != nil {
 		return &apperrors.AppError{
 			Code:    apperrors.CodeInternal,
@@ -493,6 +516,7 @@ func (u *AuthService) LogoutAll(ctx context.Context, input LogoutInput) *apperro
 		}
 	}
 
+	// TODO: introduce transaction here between refresh token and token
 	wg := sync.WaitGroup{}
 	var err01 error
 	var err02 error
