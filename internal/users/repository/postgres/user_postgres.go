@@ -211,3 +211,19 @@ func (u *UserPostgres) UpdateUserPassword(ctx context.Context, userID string, ne
 	}
 	return nil
 }
+
+func (u *UserPostgres) DeleteUser(ctx context.Context, userID string) error {
+	query := `
+		UPDATE users
+		SET is_active = false
+		WHERE id = $1
+	`
+	res, err := u.db.Pool.Exec(ctx, query, userID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}

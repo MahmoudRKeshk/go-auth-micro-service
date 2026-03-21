@@ -4,9 +4,9 @@ import (
 	"context"
 	"go-auth-micro-service/internal/auth/repository"
 	"go-auth-micro-service/internal/platform/security"
+	"go-auth-micro-service/internal/shared/utils"
 	"net/http"
 	"strings"
-	"go-auth-micro-service/internal/shared/utils"
 )
 
 type contextKey string
@@ -16,7 +16,7 @@ type AuthMiddleware struct {
 	tokenRepo repository.TokenRepository
 }
 
-func NewMiddlewares(jwtSrv *security.JwtService, tokenRepo repository.TokenRepository) *AuthMiddleware {
+func NewAuthMiddlewares(jwtSrv *security.JwtService, tokenRepo repository.TokenRepository) *AuthMiddleware {
 	return &AuthMiddleware{jwtSrv: jwtSrv, tokenRepo: tokenRepo}
 }
 

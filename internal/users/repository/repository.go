@@ -13,4 +13,5 @@ type UserRepository interface {
 	EmailExists(ctx context.Context, email string) (bool, error)
 	UsernameExists(ctx context.Context, username string) (bool, error)
 	UpdateUserPassword(ctx context.Context, userID string, newPasswordHash string) error
+	DeleteUser(ctx context.Context, userID string) error // soft delete
 }

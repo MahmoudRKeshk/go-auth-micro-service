@@ -5,9 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/gofrs/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	authdomain "go-auth-micro-service/internal/auth/domain"
 	authrepo "go-auth-micro-service/internal/auth/repository"
 	"go-auth-micro-service/internal/platform/security"
@@ -15,12 +12,16 @@ import (
 	"go-auth-micro-service/internal/shared/utils"
 	usersdomain "go-auth-micro-service/internal/users/domain"
 	userrepo "go-auth-micro-service/internal/users/repository"
-	"golang.org/x/crypto/bcrypt"
 	"net/mail"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gofrs/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthService struct {
@@ -32,7 +33,7 @@ type AuthService struct {
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
-func NewUserService(ur userrepo.UserRepository, refreshTokenRepo authrepo.RefreshTokenRepository, tokenRepo authrepo.TokenRepository, jwt security.JwtService) *AuthService {
+func NewAuthService(ur userrepo.UserRepository, refreshTokenRepo authrepo.RefreshTokenRepository, tokenRepo authrepo.TokenRepository, jwt security.JwtService) *AuthService {
 	return &AuthService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, tokenRepo: tokenRepo, jwt: jwt}
 }
 
@@ -158,6 +159,14 @@ func (authSrv *AuthService) Login(ctx context.Context, input LoginInput) (*Login
 		return nil, &errs.AppError{
 			Code:    errs.CodeUnauthorized,
 			Message: "invalid credentials: invalid password",
+			Err:     nil,
+			Details: nil,
+		}
+	}
+	if user.IsActive == false {
+		return nil, &errs.AppError{
+			Code:    errs.CodeNotFound,
+			Message: "user not found",
 			Err:     nil,
 			Details: nil,
 		}
