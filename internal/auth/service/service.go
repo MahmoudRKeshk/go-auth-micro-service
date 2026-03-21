@@ -36,8 +36,8 @@ func NewUserService(ur userrepo.UserRepository, refreshTokenRepo authrepo.Refres
 	return &AuthService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, tokenRepo: tokenRepo, jwt: jwt}
 }
 
-func (u *AuthService) CreateUser(ctx context.Context, input RegisterInput) *errs.AppError {
-	if err := u.validateRegisterRequest(input); err != nil {
+func (authSrv *AuthService) CreateUser(ctx context.Context, input RegisterInput) *errs.AppError {
+	if err := authSrv.validateRegisterRequest(input); err != nil {
 		return err
 	}
 
@@ -47,7 +47,7 @@ func (u *AuthService) CreateUser(ctx context.Context, input RegisterInput) *errs
 	lastName := strings.TrimSpace(input.LastName)
 
 	// Check if email already exists
-	emailExists, err := u.userRepo.EmailExists(ctx, email)
+	emailExists, err := authSrv.userRepo.EmailExists(ctx, email)
 	if err != nil {
 		return &errs.AppError{
 			Code:    errs.CodeInternal,
@@ -66,7 +66,7 @@ func (u *AuthService) CreateUser(ctx context.Context, input RegisterInput) *errs
 	}
 
 	// Check if username already exists
-	usernameExists, err := u.userRepo.UsernameExists(ctx, username)
+	usernameExists, err := authSrv.userRepo.UsernameExists(ctx, username)
 	if err != nil {
 		return &errs.AppError{
 			Code:    errs.CodeInternal,
@@ -117,7 +117,7 @@ func (u *AuthService) CreateUser(ctx context.Context, input RegisterInput) *errs
 		LastLoginAt:  sql.NullTime{},
 	}
 
-	createdUser, err := u.userRepo.CreateUser(ctx, user)
+	createdUser, err := authSrv.userRepo.CreateUser(ctx, user)
 	if err != nil {
 		fmt.Printf("failed to create user: %v\n", err)
 		return &errs.AppError{
@@ -133,15 +133,15 @@ func (u *AuthService) CreateUser(ctx context.Context, input RegisterInput) *errs
 	return nil
 }
 
-func (u *AuthService) Login(ctx context.Context, input LoginInput) (*LoginResult, *errs.AppError) {
-	if err := u.validateLoginRequest(input); err != nil {
+func (authSrv *AuthService) Login(ctx context.Context, input LoginInput) (*LoginResult, *errs.AppError) {
+	if err := authSrv.validateLoginRequest(input); err != nil {
 		return nil, err
 	}
 
 	email := strings.TrimSpace(input.Email)
 	password := strings.TrimSpace(input.Password)
 
-	user, err := u.userRepo.GetUserByEmail(ctx, email)
+	user, err := authSrv.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeNotFound,
@@ -163,8 +163,8 @@ func (u *AuthService) Login(ctx context.Context, input LoginInput) (*LoginResult
 		}
 	}
 
-	refreshToken, err := u.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Hour*24*7))
-	accessToken, err := u.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Minute*15))
+	refreshToken, err := authSrv.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Hour*24*7))
+	accessToken, err := authSrv.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Minute*15))
 	if err != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeInternal,
@@ -199,7 +199,7 @@ func (u *AuthService) Login(ctx context.Context, input LoginInput) (*LoginResult
 	}
 
 	// TODO: introduce transaction here between refresh token and token
-	refreshTokenEntity, err = u.refreshTokenRepo.InsertRefreshToken(ctx, refreshTokenEntity)
+	refreshTokenEntity, err = authSrv.refreshTokenRepo.InsertRefreshToken(ctx, refreshTokenEntity)
 	if err != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeInternal,
@@ -220,7 +220,7 @@ func (u *AuthService) Login(ctx context.Context, input LoginInput) (*LoginResult
 		RefreshTokenID: refreshTokenEntity.ID,
 	}
 
-	err = u.tokenRepo.InsertToken(ctx, &tokenEntity)
+	err = authSrv.tokenRepo.InsertToken(ctx, &tokenEntity)
 	if err != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeInternal,
@@ -236,14 +236,14 @@ func (u *AuthService) Login(ctx context.Context, input LoginInput) (*LoginResult
 	}, nil
 }
 
-func (u *AuthService) Refresh(ctx context.Context, input RefreshInput) (*RefreshResult, *errs.AppError) {
-	if err := u.validateRefreshRequest(input); err != nil {
+func (authSrv *AuthService) Refresh(ctx context.Context, input RefreshInput) (*RefreshResult, *errs.AppError) {
+	if err := authSrv.validateRefreshRequest(input); err != nil {
 		return nil, err
 	}
 
 	oldToken := strings.TrimSpace(input.RefreshToken)
 
-	parsedRefreshToken, err := u.jwt.ParseToken(oldToken)
+	parsedRefreshToken, err := authSrv.jwt.ParseToken(oldToken)
 	if err != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeUnauthorized,
@@ -292,10 +292,10 @@ func (u *AuthService) Refresh(ctx context.Context, input RefreshInput) (*Refresh
 	var user usersdomain.User
 
 	wg.Go(func() {
-		refreshToken, refreshTokenErr = u.refreshTokenRepo.GetRefreshTokenByTokenHashAndUserID(ctx, refreshTokenHash, userID)
+		refreshToken, refreshTokenErr = authSrv.refreshTokenRepo.GetRefreshTokenByTokenHashAndUserID(ctx, refreshTokenHash, userID)
 	})
 	wg.Go(func() {
-		user, userErr = u.userRepo.GetUserByID(ctx, userID)
+		user, userErr = authSrv.userRepo.GetUserByID(ctx, userID)
 	})
 
 	wg.Wait()
@@ -353,7 +353,7 @@ func (u *AuthService) Refresh(ctx context.Context, input RefreshInput) (*Refresh
 		}
 	}
 
-	accessToken, err := u.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Minute*15))
+	accessToken, err := authSrv.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Minute*15))
 	if err != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeInternal,
@@ -383,7 +383,7 @@ func (u *AuthService) Refresh(ctx context.Context, input RefreshInput) (*Refresh
 		RefreshTokenID: refreshToken.ID,
 	}
 
-	err = u.tokenRepo.InsertToken(ctx, &accessTokenEntity)
+	err = authSrv.tokenRepo.InsertToken(ctx, &accessTokenEntity)
 	if err != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeInternal,
@@ -398,14 +398,14 @@ func (u *AuthService) Refresh(ctx context.Context, input RefreshInput) (*Refresh
 	}, nil
 }
 
-func (u *AuthService) Logout(ctx context.Context, input LogoutInput) *errs.AppError {
-	if err := u.validateLogoutRequest(input); err != nil {
+func (authSrv *AuthService) Logout(ctx context.Context, input LogoutInput) *errs.AppError {
+	if err := authSrv.validateLogoutRequest(input); err != nil {
 		return err
 	}
 
 	refreshToken := strings.TrimSpace(input.RefreshToken)
 
-	parsedRefreshToken, err := u.jwt.ParseToken(refreshToken)
+	parsedRefreshToken, err := authSrv.jwt.ParseToken(refreshToken)
 	if err != nil {
 		return &errs.AppError{
 			Code:    errs.CodeUnauthorized,
@@ -446,7 +446,7 @@ func (u *AuthService) Logout(ctx context.Context, input LogoutInput) *errs.AppEr
 	}
 
 	refreshTokenHash := utils.HashToken(refreshToken)
-	IsRefreshTokenRevoked, err := u.refreshTokenRepo.IsRefreshTokenRevoked(ctx, refreshTokenHash, userID)
+	IsRefreshTokenRevoked, err := authSrv.refreshTokenRepo.IsRefreshTokenRevoked(ctx, refreshTokenHash, userID)
 
 	if err != nil {
 		return &errs.AppError{
@@ -468,7 +468,7 @@ func (u *AuthService) Logout(ctx context.Context, input LogoutInput) *errs.AppEr
 		}
 	}
 
-	err = u.refreshTokenRepo.RevokeRefreshToken(ctx, refreshTokenHash, userID)
+	err = authSrv.refreshTokenRepo.RevokeRefreshToken(ctx, refreshTokenHash, userID)
 	if err != nil {
 		return &errs.AppError{
 			Code:    errs.CodeInternal,
@@ -481,14 +481,14 @@ func (u *AuthService) Logout(ctx context.Context, input LogoutInput) *errs.AppEr
 	return nil
 }
 
-func (u *AuthService) LogoutAll(ctx context.Context, input LogoutInput) *errs.AppError {
-	if err := u.validateLogoutRequest(input); err != nil {
+func (authSrv *AuthService) LogoutAll(ctx context.Context, input LogoutInput) *errs.AppError {
+	if err := authSrv.validateLogoutRequest(input); err != nil {
 		return err
 	}
 
 	refreshToken := strings.TrimSpace(input.RefreshToken)
 
-	parsedRefreshToken, err := u.jwt.ParseToken(refreshToken)
+	parsedRefreshToken, err := authSrv.jwt.ParseToken(refreshToken)
 	if err != nil {
 		return &errs.AppError{
 			Code:    errs.CodeUnauthorized,
@@ -523,10 +523,10 @@ func (u *AuthService) LogoutAll(ctx context.Context, input LogoutInput) *errs.Ap
 	var err02 error
 
 	wg.Go(func() {
-		err01 = u.refreshTokenRepo.RevokeNonExpiredRefreshTokens(ctx, userID)
+		err01 = authSrv.refreshTokenRepo.RevokeNonExpiredRefreshTokens(ctx, userID)
 	})
 	wg.Go(func() {
-		err02 = u.tokenRepo.RevokeNonExpiredTokens(ctx, userID)
+		err02 = authSrv.tokenRepo.RevokeNonExpiredTokens(ctx, userID)
 	})
 
 	wg.Wait()
@@ -545,8 +545,8 @@ func (u *AuthService) LogoutAll(ctx context.Context, input LogoutInput) *errs.Ap
 
 }
 
-func (u *AuthService) GetUserByID(ctx context.Context, id string) (*UserResult, *errs.AppError) {
-	user, err := u.userRepo.GetUserByID(ctx, id)
+func (authSrv *AuthService) GetUserByID(ctx context.Context, id string) (*UserResult, *errs.AppError) {
+	user, err := authSrv.userRepo.GetUserByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, &errs.AppError{
@@ -584,11 +584,11 @@ func (u *AuthService) GetUserByID(ctx context.Context, id string) (*UserResult, 
 	}, nil
 }
 
-func (u *AuthService) ChangePassword(ctx context.Context, input ChangePasswordInput, userID string) *errs.AppError {
-	if err := u.validateChangePasswordRequest(input); err != nil {
+func (authSrv *AuthService) ChangePassword(ctx context.Context, input ChangePasswordInput, userID string) *errs.AppError {
+	if err := authSrv.validateChangePasswordRequest(input); err != nil {
 		return err
 	}
-	user, err := u.userRepo.GetUserByID(ctx, userID)
+	user, err := authSrv.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
 		return &errs.AppError{
 			Code:    errs.CodeNotFound,
@@ -626,7 +626,7 @@ func (u *AuthService) ChangePassword(ctx context.Context, input ChangePasswordIn
 			Details: nil,
 		}
 	}
-	err = u.userRepo.UpdateUserPassword(ctx, userID, newPasswordHash)
+	err = authSrv.userRepo.UpdateUserPassword(ctx, userID, newPasswordHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return &errs.AppError{
@@ -647,7 +647,7 @@ func (u *AuthService) ChangePassword(ctx context.Context, input ChangePasswordIn
 }
 
 // private utils methods
-func (u *AuthService) validateRegisterRequest(req RegisterInput) *errs.AppError {
+func (authSrv *AuthService) validateRegisterRequest(req RegisterInput) *errs.AppError {
 	errors := make(map[string]string)
 
 	email := strings.TrimSpace(req.Email)
@@ -685,7 +685,7 @@ func (u *AuthService) validateRegisterRequest(req RegisterInput) *errs.AppError 
 
 	if strings.TrimSpace(req.Password) == "" {
 		errors["password"] = "password is required"
-	} else if !u.isPasswordValid(req.Password) {
+	} else if !authSrv.isPasswordValid(req.Password) {
 		errors["password"] = "password must be between 8 and 72 characters"
 	}
 
@@ -701,7 +701,7 @@ func (u *AuthService) validateRegisterRequest(req RegisterInput) *errs.AppError 
 	return nil
 }
 
-func (u *AuthService) validateLoginRequest(req LoginInput) *errs.AppError {
+func (authSrv *AuthService) validateLoginRequest(req LoginInput) *errs.AppError {
 	errors := make(map[string]string)
 
 	email := strings.TrimSpace(req.Email)
@@ -729,7 +729,7 @@ func (u *AuthService) validateLoginRequest(req LoginInput) *errs.AppError {
 	return nil
 }
 
-func (u *AuthService) validateRefreshRequest(req RefreshInput) *errs.AppError {
+func (authSrv *AuthService) validateRefreshRequest(req RefreshInput) *errs.AppError {
 	errors := make(map[string]string)
 
 	refreshToken := strings.TrimSpace(req.RefreshToken)
@@ -750,7 +750,7 @@ func (u *AuthService) validateRefreshRequest(req RefreshInput) *errs.AppError {
 	return nil
 }
 
-func (u *AuthService) validateLogoutRequest(req LogoutInput) *errs.AppError {
+func (authSrv *AuthService) validateLogoutRequest(req LogoutInput) *errs.AppError {
 	errors := make(map[string]string)
 
 	refreshToken := strings.TrimSpace(req.RefreshToken)
@@ -771,7 +771,7 @@ func (u *AuthService) validateLogoutRequest(req LogoutInput) *errs.AppError {
 	return nil
 }
 
-func (u *AuthService) validateChangePasswordRequest(req ChangePasswordInput) *errs.AppError {
+func (authSrv *AuthService) validateChangePasswordRequest(req ChangePasswordInput) *errs.AppError {
 	errors := make(map[string]string)
 
 	if req.OldPassword == "" {
@@ -780,7 +780,7 @@ func (u *AuthService) validateChangePasswordRequest(req ChangePasswordInput) *er
 
 	if req.NewPassword == "" {
 		errors["new_password"] = "new password is required"
-	} else if !u.isPasswordValid(req.NewPassword) {
+	} else if !authSrv.isPasswordValid(req.NewPassword) {
 		errors["new_password"] = "new password must be between 8 and 72 characters"
 	}
 
@@ -803,7 +803,7 @@ func isValidEmail(email string) bool {
 	return parsed.Address == email
 }
 
-func (u *AuthService) isPasswordValid(password string) bool {
+func (authSrv *AuthService) isPasswordValid(password string) bool {
 	if len(password) < 8 || len(password) > 72 {
 		return false
 	}
