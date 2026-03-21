@@ -37,3 +37,8 @@ type UserResult struct {
 	Email     string
 	Username  string
 }
+
+type ChangePasswordInput struct {
+	OldPassword string
+	NewPassword string
+}

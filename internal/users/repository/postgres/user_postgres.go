@@ -1,17 +1,19 @@
 package postgres
 
 import (
-	"go-auth-micro-service/internal/users/domain"
-	"go-auth-micro-service/internal/platform/db"
 	"context"
+	"go-auth-micro-service/internal/platform/db"
+	"go-auth-micro-service/internal/users/domain"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type UserPostgres struct {
 	db *db.Postgres
 }
 
-func NewUserRepository(db *db.Postgres) *UserPostgres{
-	return &UserPostgres {db: db}
+func NewUserRepository(db *db.Postgres) *UserPostgres {
+	return &UserPostgres{db: db}
 }
 
 func (u *UserPostgres) GetUserByID(ctx context.Context, id string) (domain.User, error) {
@@ -185,4 +187,27 @@ func (u *UserPostgres) UsernameExists(ctx context.Context, username string) (boo
 	}
 
 	return false, nil
+}
+
+func (u *UserPostgres) UpdateUserPassword(ctx context.Context, userID string, newPasswordHash string) error {
+	query := `
+		UPDATE users
+		SET password_hash = $1
+		WHERE id = $2
+	`
+
+	res, err := u.db.Pool.Exec(
+		ctx,
+		query,
+		newPasswordHash,
+		userID,
+	)
+	if err != nil {
+		return err
+	}
+
+	if res.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }

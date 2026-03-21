@@ -12,4 +12,5 @@ type UserRepository interface {
 	GetUserByUsername(ctx context.Context, username string) (domain.User, error)
 	EmailExists(ctx context.Context, email string) (bool, error)
 	UsernameExists(ctx context.Context, username string) (bool, error)
+	UpdateUserPassword(ctx context.Context, userID string, newPasswordHash string) error
 }

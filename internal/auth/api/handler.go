@@ -4,8 +4,8 @@ import (
 	"go-auth-micro-service/internal/auth/service"
 	"go-auth-micro-service/internal/platform/middlewares"
 	"go-auth-micro-service/internal/shared/errs"
-	"net/http"
 	"go-auth-micro-service/internal/shared/httpx"
+	"net/http"
 )
 
 type AuthHandler struct {
@@ -180,4 +180,42 @@ func (h *AuthHandler) AuthMe(rw http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
+func (h *AuthHandler) ChangePassword(rw http.ResponseWriter, r *http.Request) {
+	var req ChangePasswordRequest
+	if err := httpx.DecodeJSONBody(r, &req); err != nil {
+		httpx.WriteError(rw, http.StatusBadRequest, &errs.ErrorResponse{
+			Code:    "INVALID_REQUEST",
+			Message: "invalid request body",
+			Details: map[string]string{
+				"request": err.Error(),
+			},
+		})
+		return
+	}
+	userId, ok := h.middlewares.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(rw, http.StatusUnauthorized, &errs.ErrorResponse{
+			Code:    "UNAUTHORIZED",
+			Message: "unauthorized",
+			Details: nil,
+		})
+		return
+	}
+	if userId == "" {
+		httpx.WriteError(rw, http.StatusUnauthorized, &errs.ErrorResponse{
+			Code:    "UNAUTHORIZED",
+			Message: "unauthorized",
+			Details: nil,
+		})
+		return
+	}
+	appErr := h.srv.ChangePassword(r.Context(), service.ChangePasswordInput{
+		OldPassword: req.OldPassword,
+		NewPassword: req.NewPassword,
+	}, userId)
+	if appErr != nil {
+		httpx.WriteAppError(rw, "failed to change password", appErr)
+		return
+	}
+	httpx.WriteJSON(rw, http.StatusOK, nil)
+}

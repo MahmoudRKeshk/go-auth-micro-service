@@ -15,6 +15,7 @@ import (
 	"go-auth-micro-service/internal/shared/utils"
 	usersdomain "go-auth-micro-service/internal/users/domain"
 	userrepo "go-auth-micro-service/internal/users/repository"
+	"golang.org/x/crypto/bcrypt"
 	"net/mail"
 	"regexp"
 	"strings"
@@ -583,6 +584,68 @@ func (u *AuthService) GetUserByID(ctx context.Context, id string) (*UserResult, 
 	}, nil
 }
 
+func (u *AuthService) ChangePassword(ctx context.Context, input ChangePasswordInput, userID string) *errs.AppError {
+	if err := u.validateChangePasswordRequest(input); err != nil {
+		return err
+	}
+	user, err := u.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		return &errs.AppError{
+			Code:    errs.CodeNotFound,
+			Message: "user not found",
+			Err:     err,
+			Details: nil,
+		}
+	}
+	newPasswordHash, err := utils.HashPassword(input.NewPassword)
+	if err != nil {
+		return &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to hash new password",
+			Err:     err,
+			Details: nil,
+		}
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.OldPassword))
+	if err != nil {
+		return &errs.AppError{
+			Code:    errs.CodeUnauthorized,
+			Message: "old password is invalid",
+			Err:     nil,
+			Details: nil,
+		}
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.NewPassword))
+	if err == nil {
+		return &errs.AppError{
+			Code:    errs.CodeValidation,
+			Message: "new password must be different from the old password",
+			Err:     nil,
+			Details: nil,
+		}
+	}
+	err = u.userRepo.UpdateUserPassword(ctx, userID, newPasswordHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &errs.AppError{
+				Code:    errs.CodeNotFound,
+				Message: "user not found",
+				Err:     err,
+				Details: nil,
+			}
+		}
+		return &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to update user password",
+			Err:     err,
+			Details: nil,
+		}
+	}
+	return nil
+}
+
 // private utils methods
 func (u *AuthService) validateRegisterRequest(req RegisterInput) *errs.AppError {
 	errors := make(map[string]string)
@@ -622,7 +685,7 @@ func (u *AuthService) validateRegisterRequest(req RegisterInput) *errs.AppError 
 
 	if strings.TrimSpace(req.Password) == "" {
 		errors["password"] = "password is required"
-	} else if len(req.Password) < 8 || len(req.Password) > 72 {
+	} else if !u.isPasswordValid(req.Password) {
 		errors["password"] = "password must be between 8 and 72 characters"
 	}
 
@@ -708,6 +771,29 @@ func (u *AuthService) validateLogoutRequest(req LogoutInput) *errs.AppError {
 	return nil
 }
 
+func (u *AuthService) validateChangePasswordRequest(req ChangePasswordInput) *errs.AppError {
+	errors := make(map[string]string)
+
+	if req.OldPassword == "" {
+		errors["old_password"] = "old password is required"
+	}
+
+	if req.NewPassword == "" {
+		errors["new_password"] = "new password is required"
+	} else if !u.isPasswordValid(req.NewPassword) {
+		errors["new_password"] = "new password must be between 8 and 72 characters"
+	}
+
+	if len(errors) > 0 {
+		return &errs.AppError{
+			Code:    errs.CodeValidation,
+			Message: "invalid change password request",
+			Err:     nil,
+			Details: errors,
+		}
+	}
+	return nil
+}
 func isValidEmail(email string) bool {
 	parsed, err := mail.ParseAddress(email)
 	if err != nil {
@@ -715,4 +801,11 @@ func isValidEmail(email string) bool {
 	}
 
 	return parsed.Address == email
+}
+
+func (u *AuthService) isPasswordValid(password string) bool {
+	if len(password) < 8 || len(password) > 72 {
+		return false
+	}
+	return true
 }
