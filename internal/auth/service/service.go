@@ -144,13 +144,21 @@ func (authSrv *AuthService) Login(ctx context.Context, input LoginInput) (*Login
 
 	user, err := authSrv.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &errs.AppError{
+				Code:    errs.CodeNotFound,
+				Message: "user not found: email not found",
+				Err:     err,
+				Details: map[string]string{
+					"email": "email not found",
+				},
+			}
+		}
 		return nil, &errs.AppError{
-			Code:    errs.CodeNotFound,
-			Message: "user not found: email not found",
+			Code:    errs.CodeInternal,
+			Message: "failed to login: failed to get user by email",
 			Err:     err,
-			Details: map[string]string{
-				"email": "email not found",
-			},
+			Details: nil,
 		}
 	}
 
@@ -173,6 +181,14 @@ func (authSrv *AuthService) Login(ctx context.Context, input LoginInput) (*Login
 	}
 
 	refreshToken, err := authSrv.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Hour*24*7))
+	if err != nil {
+		return nil, &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to generate refresh token",
+			Err:     err,
+			Details: nil,
+		}
+	}
 	accessToken, err := authSrv.jwt.GenerateToken(user.ID.String(), user.Username, time.Now().Add(time.Minute*15))
 	if err != nil {
 		return nil, &errs.AppError{
@@ -187,7 +203,7 @@ func (authSrv *AuthService) Login(ctx context.Context, input LoginInput) (*Login
 	if err != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeInternal,
-			Message: "failed to generate access token",
+			Message: "failed to generate uuid for refresh token",
 			Err:     err,
 			Details: nil,
 		}
@@ -213,6 +229,16 @@ func (authSrv *AuthService) Login(ctx context.Context, input LoginInput) (*Login
 		return nil, &errs.AppError{
 			Code:    errs.CodeInternal,
 			Message: "failed to insert refresh token",
+			Err:     err,
+			Details: nil,
+		}
+	}
+
+	rawID, err = uuid.NewV4()
+	if err != nil {
+		return nil, &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to generate uuid for access token",
 			Err:     err,
 			Details: nil,
 		}
@@ -540,11 +566,21 @@ func (authSrv *AuthService) LogoutAll(ctx context.Context, input LogoutInput) *e
 
 	wg.Wait()
 
-	if err01 != nil || err02 != nil {
+	if err01 != nil {
 		return &errs.AppError{
 			Code:    errs.CodeInternal,
 			Message: "failed to logout all",
-			Err:     err,
+			Err:     err01,
+			Details: map[string]string{
+				"refresh_token": "failed to logout all",
+			},
+		}
+	}
+	if err02 != nil {
+		return &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to logout all",
+			Err:     err02,
 			Details: map[string]string{
 				"refresh_token": "failed to logout all",
 			},
@@ -599,9 +635,19 @@ func (authSrv *AuthService) ChangePassword(ctx context.Context, input ChangePass
 	}
 	user, err := authSrv.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &errs.AppError{
+				Code:    errs.CodeNotFound,
+				Message: "user not found",
+				Err:     err,
+				Details: map[string]string{
+					"user": "user not found",
+				},
+			}
+		}
 		return &errs.AppError{
-			Code:    errs.CodeNotFound,
-			Message: "user not found",
+			Code:    errs.CodeInternal,
+			Message: "failed to get user",
 			Err:     err,
 			Details: nil,
 		}
