@@ -33,8 +33,8 @@ func Run() {
 
 	// services
 	jwtService := security.NewJwtService(cfg.GetJwtSecret())
-	userService := userservice.NewUserService(userRepo, tokenRepo, refreshTokenRepo)
-	authService := authservice.NewAuthService(userRepo, refreshTokenRepo, tokenRepo, *jwtService)
+	userService := userservice.NewUserService(userRepo, tokenRepo, refreshTokenRepo, postgresDB)
+	authService := authservice.NewAuthService(userRepo, refreshTokenRepo, tokenRepo, *jwtService, postgresDB)
 
 	// middlewares
 	authMiddleware := middlewares.NewAuthMiddlewares(jwtService, tokenRepo)

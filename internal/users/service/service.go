@@ -2,21 +2,23 @@ package service
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5"
 	authrepo "go-auth-micro-service/internal/auth/repository"
+	"go-auth-micro-service/internal/platform/db"
 	"go-auth-micro-service/internal/shared/errs"
 	"go-auth-micro-service/internal/users/repository"
-	"sync"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type UserService struct {
 	userRepo         repository.UserRepository
 	tokenRepo        authrepo.TokenRepository
 	refreshTokenRepo authrepo.RefreshTokenRepository
+	db               *db.Postgres
 }
 
-func NewUserService(userRepo repository.UserRepository, tokenRepo authrepo.TokenRepository, refreshTokenRepo authrepo.RefreshTokenRepository) *UserService {
-	return &UserService{userRepo: userRepo, tokenRepo: tokenRepo, refreshTokenRepo: refreshTokenRepo}
+func NewUserService(userRepo repository.UserRepository, tokenRepo authrepo.TokenRepository, refreshTokenRepo authrepo.RefreshTokenRepository, db *db.Postgres) *UserService {
+	return &UserService{userRepo: userRepo, tokenRepo: tokenRepo, refreshTokenRepo: refreshTokenRepo, db: db}
 }
 
 func (u *UserService) GetUserByID(ctx context.Context, id string) (*UserResult, *errs.AppError) {
@@ -59,54 +61,63 @@ func (u *UserService) GetUserByID(ctx context.Context, id string) (*UserResult, 
 
 func (u *UserService) DeleteUser(ctx context.Context, userID string) *errs.AppError {
 	// TODO: introduce transaction here between refresh token and token
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to begin transaction",
+			Err:     err,
+			Details: nil,
+		}
+	}
+	var txErr error
+	defer func() {
+		if txErr != nil {
+			tx.Rollback(ctx)
+		} else {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				// TODO: handle commit errors and log them properly
+			}
+		}
+	}()
 
-	wg := sync.WaitGroup{}
-	var delUsrErr error
-	var delRefreshTokenErr error
-	var delTokenErr error
+	txErr = u.refreshTokenRepo.RevokeNonExpiredRefreshTokens(ctx, userID)
+	if txErr != nil {
+		return &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to revoke refresh tokens",
+			Err:     txErr,
+			Details: nil,
+		}
+	}
 
-	wg.Go(func() {
-		delUsrErr = u.userRepo.DeleteUser(ctx, userID)
-	})
-	wg.Go(func() {
-		delRefreshTokenErr = u.refreshTokenRepo.RevokeNonExpiredRefreshTokens(ctx, userID)
-	})
-	wg.Go(func() {
-		delTokenErr = u.tokenRepo.RevokeNonExpiredTokens(ctx, userID)
-	})
+	txErr = u.tokenRepo.RevokeNonExpiredTokens(ctx, userID)
+	if txErr != nil {
+		return &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to revoke tokens",
+			Err:     txErr,
+			Details: nil,
+		}
+	}
 
-	wg.Wait()
-	if delUsrErr != nil {
-		if delUsrErr == pgx.ErrNoRows {
+	txErr = u.userRepo.DeleteUser(ctx, userID)
+	if txErr != nil {
+		if txErr == pgx.ErrNoRows {
 			return &errs.AppError{
 				Code:    errs.CodeNotFound,
 				Message: "user not found",
-				Err:     delUsrErr,
+				Err:     txErr,
 				Details: nil,
 			}
 		}
 		return &errs.AppError{
 			Code:    errs.CodeInternal,
 			Message: "failed to delete user",
-			Err:     delUsrErr,
+			Err:     txErr,
 			Details: nil,
 		}
 	}
-	if delRefreshTokenErr != nil {
-		return &errs.AppError{
-			Code:    errs.CodeInternal,
-			Message: "failed to revoke refresh tokens",
-			Err:     delRefreshTokenErr,
-			Details: nil,
-		}
-	}
-	if delTokenErr != nil {
-		return &errs.AppError{
-			Code:    errs.CodeInternal,
-			Message: "failed to revoke tokens",
-			Err:     delTokenErr,
-			Details: nil,
-		}
-	}
+
 	return nil
 }

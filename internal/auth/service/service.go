@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"go-auth-micro-service/internal/platform/db"
+
 	"github.com/gofrs/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -29,12 +31,13 @@ type AuthService struct {
 	refreshTokenRepo authrepo.RefreshTokenRepository
 	tokenRepo        authrepo.TokenRepository
 	jwt              security.JwtService
+	db               *db.Postgres
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
-func NewAuthService(ur userrepo.UserRepository, refreshTokenRepo authrepo.RefreshTokenRepository, tokenRepo authrepo.TokenRepository, jwt security.JwtService) *AuthService {
-	return &AuthService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, tokenRepo: tokenRepo, jwt: jwt}
+func NewAuthService(ur userrepo.UserRepository, refreshTokenRepo authrepo.RefreshTokenRepository, tokenRepo authrepo.TokenRepository, jwt security.JwtService, db *db.Postgres) *AuthService {
+	return &AuthService{userRepo: ur, refreshTokenRepo: refreshTokenRepo, tokenRepo: tokenRepo, jwt: jwt, db: db}
 }
 
 func (authSrv *AuthService) CreateUser(ctx context.Context, input RegisterInput) *errs.AppError {
@@ -223,13 +226,33 @@ func (authSrv *AuthService) Login(ctx context.Context, input LoginInput) (*Login
 		CreatedAt:  time.Now(),
 	}
 
-	// TODO: introduce transaction here between refresh token and token
-	refreshTokenEntity, err = authSrv.refreshTokenRepo.InsertRefreshToken(ctx, refreshTokenEntity)
+	tx, err := authSrv.db.Pool.Begin(ctx)
 	if err != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeInternal,
-			Message: "failed to insert refresh token",
+			Message: "failed to begin transaction",
 			Err:     err,
+			Details: nil,
+		}
+	}
+	var txErr error
+	defer func() {
+		if txErr != nil {
+			tx.Rollback(ctx)
+		} else {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				// TODO: handle commit errors and log them properly
+				fmt.Printf("failed to commit transaction: %v\n", commitErr)
+			}
+		}
+	}()
+
+	refreshTokenEntity, txErr = authSrv.refreshTokenRepo.InsertRefreshToken(ctx, refreshTokenEntity)
+	if txErr != nil {
+		return nil, &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to insert refresh token",
+			Err:     txErr,
 			Details: nil,
 		}
 	}
@@ -255,12 +278,12 @@ func (authSrv *AuthService) Login(ctx context.Context, input LoginInput) (*Login
 		RefreshTokenID: refreshTokenEntity.ID,
 	}
 
-	err = authSrv.tokenRepo.InsertToken(ctx, &tokenEntity)
-	if err != nil {
+	txErr = authSrv.tokenRepo.InsertToken(ctx, &tokenEntity)
+	if txErr != nil {
 		return nil, &errs.AppError{
 			Code:    errs.CodeInternal,
 			Message: "failed to insert access token",
-			Err:     err,
+			Err:     txErr,
 			Details: nil,
 		}
 	}
@@ -553,34 +576,45 @@ func (authSrv *AuthService) LogoutAll(ctx context.Context, input LogoutInput) *e
 	}
 
 	// TODO: introduce transaction here between refresh token and token
-	wg := sync.WaitGroup{}
-	var err01 error
-	var err02 error
+	tx, err := authSrv.db.Pool.Begin(ctx)
+	if err != nil {
+		return &errs.AppError{
+			Code:    errs.CodeInternal,
+			Message: "failed to begin transaction",
+			Err:     err,
+			Details: nil,
+		}
+	}
+	var txErr error
+	defer func() {
+		if txErr != nil {
+			tx.Rollback(ctx)
+		} else {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				// TODO: handle commit errors and log them properly
+				fmt.Printf("failed to commit transaction: %v\n", commitErr)
+			}
+		}
+	}()
 
-	wg.Go(func() {
-		err01 = authSrv.refreshTokenRepo.RevokeNonExpiredRefreshTokens(ctx, userID)
-	})
-	wg.Go(func() {
-		err02 = authSrv.tokenRepo.RevokeNonExpiredTokens(ctx, userID)
-	})
-
-	wg.Wait()
-
-	if err01 != nil {
+	txErr = authSrv.refreshTokenRepo.RevokeNonExpiredRefreshTokens(ctx, userID)
+	if txErr != nil {
 		return &errs.AppError{
 			Code:    errs.CodeInternal,
 			Message: "failed to logout all",
-			Err:     err01,
+			Err:     txErr,
 			Details: map[string]string{
 				"refresh_token": "failed to logout all",
 			},
 		}
 	}
-	if err02 != nil {
+
+	txErr = authSrv.tokenRepo.RevokeNonExpiredTokens(ctx, userID)
+	if txErr != nil {
 		return &errs.AppError{
 			Code:    errs.CodeInternal,
 			Message: "failed to logout all",
-			Err:     err02,
+			Err:     txErr,
 			Details: map[string]string{
 				"refresh_token": "failed to logout all",
 			},
